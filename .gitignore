@@ -1,0 +1,22 @@
+.dart_tool/
+.packages
+build/
+
+# Local environment overrides
+.env
+.env.*
+!.env.example
+
+# OS / editor noise
+.DS_Store
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Config
+tgbot.yaml
+
+# Test coverage
+coverage/
