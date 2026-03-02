@@ -59,7 +59,7 @@ bots:
       );
       expect(
         config.telegramCommands.map((command) => command.command),
-        <String>['fix', 'start', 'new', 'stop'],
+        <String>['fix', 'start', 'new', 'stop', 'restart'],
       );
       expect(config.telegramCommands.first.description, 'Fix this: {args}');
       expect(config.telegramCommands[1].description, 'Custom start');
@@ -108,8 +108,32 @@ bots:
       expect(config.finalResponseOnly, isFalse);
       expect(
         config.telegramCommands.map((command) => command.command),
-        <String>['review_1', 'start', 'new', 'stop'],
+        <String>['review_1', 'start', 'new', 'stop', 'restart'],
       );
+    });
+
+    test('keeps custom restart command and dedupes built-in restart', () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-config-');
+      addTearDown(() => tempDir.delete(recursive: true));
+
+      final file = File('${tempDir.path}/restart.yaml')
+        ..writeAsStringSync('''
+bots:
+  - name: bot
+    telegram_bot_token: TOKEN
+    allowed_user_ids: 1
+    project_path: ${tempDir.path}
+    telegram_commands:
+      - command: restart
+        description: Custom restart behavior
+''');
+
+      final config = AppConfig.loadMany(path: file.path).single;
+      expect(
+        config.telegramCommands.map((command) => command.command),
+        <String>['restart', 'start', 'new', 'stop'],
+      );
+      expect(config.telegramCommands.first.description, 'Custom restart behavior');
     });
 
     test('throws for missing files and malformed configs', () async {

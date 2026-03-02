@@ -2,8 +2,6 @@
 
 `tgbot` is a Dart CLI that connects a Telegram bot to AI CLIs (`codex`, `opencode`, `gemini`, `claude`). It long-polls Telegram, forwards authorized messages into the configured provider CLI, keeps a per-chat thread ID in memory, and sends streamed text plus local file/image artifacts back to Telegram.
 
-Current version: `0.1.6`
-
 ## Install
 
 ```bash
@@ -188,7 +186,7 @@ Notes:
 - Every bot must end up with an effective `project_path`.
 - `telegram_commands` must be a non-empty list when provided.
 - Command names must match `^[a-z0-9_]{1,32}$`.
-- Built-in `/start`, `/new`, and `/stop` commands are always present unless you override them in `telegram_commands`.
+- Built-in `/start`, `/new`, `/stop`, and `/restart` commands are always present unless you override them in `telegram_commands`.
 - `project_path` is normalized to an absolute path at startup.
 - In `strict_config: true`, unknown keys in `root`, `defaults`, `bots[*]`, and `telegram_commands[*]` fail fast.
 - `ai_cli_args` string values support shell-like quoting (single quotes, double quotes, and escapes).
@@ -230,6 +228,9 @@ Examples:
 - `/start` returns a short help message plus the registered command list.
 - `/new` clears the in-memory thread/session id for that Telegram chat.
 - `/stop` terminates the active provider CLI process for that Telegram chat, if one is running.
+- `/restart` reloads the same YAML config file used at startup and restarts all bots in this process.
+- `/restart` is allowed only if the sender ID is listed in `allowed_user_ids` for every configured bot.
+- `/restart` uses rollback semantics: if reload/startup fails, existing bots keep running.
 - If a run is already in progress for a chat, new prompts wait in that chat's queue until the active run finishes or is stopped.
 - Any other text message is forwarded to the configured provider CLI.
 - The current thread/session id is stored per chat and reused until `/new` or process restart.

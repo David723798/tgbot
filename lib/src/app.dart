@@ -6,19 +6,22 @@ import 'package:path/path.dart' as p;
 import 'package:tgbot/src/config.dart';
 import 'package:tgbot/src/logger.dart';
 import 'package:tgbot/src/models/telegram_models.dart';
+import 'package:tgbot/src/runtime/bot_app.dart';
+import 'package:tgbot/src/runtime/restart_contract.dart';
 import 'package:tgbot/src/runner/ai_cli_runner.dart';
 import 'package:tgbot/src/runner/runner_factory.dart';
 import 'package:tgbot/src/session/session_store.dart';
 import 'package:tgbot/src/telegram/telegram_client.dart';
 
 /// Coordinates Telegram polling, provider execution, and per-chat sessions.
-class BridgeApp {
+class BridgeApp implements BotApp {
   /// Creates a bridge app from its runtime dependencies.
   BridgeApp({
     required this.config,
     required this.telegram,
     AiCliRunner? runner,
     AiCliRunner? codex,
+    this.onRestartRequested,
     required this.sessions,
     AppLogger? logger,
   })  : assert(runner != null || codex != null),
@@ -33,6 +36,7 @@ class BridgeApp {
             );
 
   /// Bot-specific configuration values.
+  @override
   final AppConfig config;
 
   /// Telegram API client.
@@ -50,6 +54,9 @@ class BridgeApp {
   /// Runtime logger.
   final AppLogger logger;
 
+  /// Callback used to request a process-level restart.
+  final RestartRequestHandler? onRestartRequested;
+
   /// Per-chat work queue for normal message handling.
   final Map<int, Future<void>> _chatWork = <int, Future<void>>{};
 
@@ -60,16 +67,21 @@ class BridgeApp {
   int _errorCount = 0;
 
   /// Builds a fully wired app from a parsed config object.
-  factory BridgeApp.fromConfig(AppConfig config) {
+  factory BridgeApp.fromConfig(
+    AppConfig config, {
+    RestartRequestHandler? onRestartRequested,
+  }) {
     return BridgeApp(
       config: config,
       telegram: TelegramClient(config.botToken),
       runner: createRunner(config),
+      onRestartRequested: onRestartRequested,
       sessions: SessionStore(),
     );
   }
 
   /// Registers bot commands and starts long-polling Telegram updates.
+  @override
   Future<void> run() async {
     if (_running) {
       return;
@@ -115,7 +127,7 @@ class BridgeApp {
               !config.allowedUserIds.contains(message.fromUserId)) {
             continue;
           }
-          if (_isStopCommand(message.text)) {
+          if (_isStopCommand(message.text) || _isRestartCommand(message.text)) {
             unawaited(_handleMessage(message));
             continue;
           }
@@ -143,6 +155,7 @@ class BridgeApp {
   }
 
   /// Stops polling and in-flight runs, then closes Telegram resources.
+  @override
   Future<void> stop() async {
     if (!_running) {
       await _dispose();
@@ -168,7 +181,7 @@ class BridgeApp {
       final commandsText = config.telegramCommands
           .map((command) => '/${command.command} - ${command.description}')
           .join('\n');
-      await telegram.sendMessage(
+      await _sendControlMessage(
         chatId: message.chatId,
         text: 'Send any message to chat with ${_providerLabel()}.\n$commandsText',
       );
@@ -177,7 +190,7 @@ class BridgeApp {
 
     if (text == '/new' || text.startsWith('/new ')) {
       sessions.reset(message.chatId);
-      await telegram.sendMessage(
+      await _sendControlMessage(
         chatId: message.chatId,
         text: '${config.name} has started a new session.',
       );
@@ -186,12 +199,36 @@ class BridgeApp {
 
     if (_isStopCommand(text)) {
       final stopped = await sessions.stopRun(message.chatId);
-      await telegram.sendMessage(
+      await _sendControlMessage(
         chatId: message.chatId,
         text: stopped
             ? '${config.name} stopped the active ${_providerLabel()} run.'
             : 'No ${_providerLabel()} run is active for this chat.',
       );
+      return;
+    }
+
+    if (_isRestartCommand(text)) {
+      final handler = onRestartRequested;
+      if (handler == null) {
+        await _sendControlMessage(
+          chatId: message.chatId,
+          text: 'Restart is not enabled for this bot runtime.',
+        );
+        return;
+      }
+      await _sendControlMessage(
+        chatId: message.chatId,
+        text: 'Restart requested. Reloading config and restarting all bots...',
+      );
+      final outcome = await handler(
+        requesterUserId: message.fromUserId,
+        requesterChatId: message.chatId,
+        requesterBotName: config.name,
+      );
+      if (outcome.sendToRequester) {
+        await _sendControlMessage(chatId: message.chatId, text: outcome.message);
+      }
       return;
     }
 
@@ -346,6 +383,15 @@ class BridgeApp {
     return trimmed == '/stop' || trimmed.startsWith('/stop ');
   }
 
+  /// Returns whether [text] targets the built-in `/restart` command.
+  bool _isRestartCommand(String? text) {
+    if (text == null) {
+      return false;
+    }
+    final trimmed = text.trim();
+    return trimmed == '/restart' || trimmed.startsWith('/restart ');
+  }
+
   /// Builds a stable key for duplicate Telegram message suppression.
   String _normalizeMessageForDedup(String value) {
     final unified = value.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
@@ -462,6 +508,30 @@ class BridgeApp {
       case AiProvider.claude:
         return 'Claude';
     }
+  }
+
+  /// Sends command/status text and swallows failures caused by shutdown races.
+  Future<void> _sendControlMessage({
+    required int chatId,
+    required String text,
+  }) async {
+    try {
+      await telegram.sendMessage(chatId: chatId, text: text);
+    } catch (error) {
+      if (_isExpectedControlSendShutdownError(error)) {
+        return;
+      }
+      logger.warn('control_message_send_failed', fields: <String, Object?>{
+        'chat_id': chatId,
+        'error': error.toString(),
+      });
+    }
+  }
+
+  /// Returns true for known benign send failures during shutdown handover.
+  bool _isExpectedControlSendShutdownError(Object error) {
+    final text = error.toString();
+    return text.contains('Client is already closed');
   }
 
   Future<void> _drainQueuedWork() async {

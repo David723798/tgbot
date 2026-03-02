@@ -9,6 +9,7 @@ import 'package:tgbot/src/models/telegram_models.dart';
 import 'package:tgbot/src/runner/claude_runner.dart';
 import 'package:tgbot/src/runner/gemini_runner.dart';
 import 'package:tgbot/src/runner/opencode_runner.dart';
+import 'package:tgbot/src/runtime/restart_contract.dart';
 import 'package:tgbot/src/session/session_store.dart';
 import 'package:tgbot/src/telegram/telegram_client.dart';
 
@@ -139,6 +140,8 @@ void main() {
           contains('/new - Start a new session'));
       expect(telegram.sentMessages.first.text,
           contains('/stop - Stop the active AI CLI run'));
+      expect(telegram.sentMessages.first.text,
+          contains('/restart - Restart all bots and reload config'));
       expect(telegram.sentMessages.last.text, 'bot has started a new session.');
       expect(sessions.current(10).version, 2);
     });
@@ -489,6 +492,156 @@ void main() {
       );
     });
 
+    test('delegates /restart to restart callback', () async {
+      final telegram = _FakeTelegramClient(
+        updates: <List<TelegramUpdate>>[
+          <TelegramUpdate>[
+            TelegramUpdate(
+              updateId: 1,
+              message:
+                  TelegramMessage(chatId: 4, fromUserId: 1, text: '/restart'),
+            ),
+          ],
+        ],
+      );
+      var called = 0;
+      final app = BridgeApp(
+        config: _config(Directory.current.path),
+        telegram: telegram,
+        codex: _FakeCodexRunner(projectPath: Directory.current.path),
+        onRestartRequested: ({
+          required requesterUserId,
+          required requesterChatId,
+          required requesterBotName,
+        }) async {
+          called++;
+          expect(requesterUserId, 1);
+          expect(requesterChatId, 4);
+          expect(requesterBotName, 'bot');
+          return const RestartOutcome(message: 'restart ok', sendToRequester: true);
+        },
+        sessions: SessionStore(),
+      );
+
+      await _runUntilIdle(app);
+
+      expect(called, 1);
+      expect(
+        telegram.sentMessages.map((entry) => entry.text),
+        <String>[
+          'Restart requested. Reloading config and restarting all bots...',
+          'restart ok',
+        ],
+      );
+    });
+
+    test('handles /restart while restart is in progress', () async {
+      final telegram = _FakeTelegramClient(
+        updates: <List<TelegramUpdate>>[
+          <TelegramUpdate>[
+            TelegramUpdate(
+              updateId: 1,
+              message:
+                  TelegramMessage(chatId: 4, fromUserId: 1, text: '/restart'),
+            ),
+          ],
+        ],
+      );
+      final app = BridgeApp(
+        config: _config(Directory.current.path),
+        telegram: telegram,
+        codex: _FakeCodexRunner(projectPath: Directory.current.path),
+        onRestartRequested: ({
+          required requesterUserId,
+          required requesterChatId,
+          required requesterBotName,
+        }) async =>
+            const RestartOutcome(message: 'Restart already in progress.'),
+        sessions: SessionStore(),
+      );
+
+      await _runUntilIdle(app);
+
+      expect(
+        telegram.sentMessages.map((entry) => entry.text),
+        <String>[
+          'Restart requested. Reloading config and restarting all bots...',
+          'Restart already in progress.',
+        ],
+      );
+    });
+
+    test('handles /restart unauthorized response', () async {
+      final telegram = _FakeTelegramClient(
+        updates: <List<TelegramUpdate>>[
+          <TelegramUpdate>[
+            TelegramUpdate(
+              updateId: 1,
+              message:
+                  TelegramMessage(chatId: 4, fromUserId: 1, text: '/restart'),
+            ),
+          ],
+        ],
+      );
+      final app = BridgeApp(
+        config: _config(Directory.current.path),
+        telegram: telegram,
+        codex: _FakeCodexRunner(projectPath: Directory.current.path),
+        onRestartRequested: ({
+          required requesterUserId,
+          required requesterChatId,
+          required requesterBotName,
+        }) async =>
+            const RestartOutcome(
+              message: 'Restart denied: your user id must be allowed.',
+            ),
+        sessions: SessionStore(),
+      );
+
+      await _runUntilIdle(app);
+
+      expect(
+        telegram.sentMessages.map((entry) => entry.text),
+        <String>[
+          'Restart requested. Reloading config and restarting all bots...',
+          'Restart denied: your user id must be allowed.',
+        ],
+      );
+    });
+
+    test('does not crash when /restart reply send fails after restart', () async {
+      final telegram = _FakeTelegramClient(
+        throwOnSendMessage: true,
+        updates: <List<TelegramUpdate>>[
+          <TelegramUpdate>[
+            TelegramUpdate(
+              updateId: 1,
+              message:
+                  TelegramMessage(chatId: 4, fromUserId: 1, text: '/restart'),
+            ),
+          ],
+        ],
+      );
+      final app = BridgeApp(
+        config: _config(Directory.current.path),
+        telegram: telegram,
+        codex: _FakeCodexRunner(projectPath: Directory.current.path),
+        onRestartRequested: ({
+          required requesterUserId,
+          required requesterChatId,
+          required requesterBotName,
+        }) async =>
+            const RestartOutcome(
+              message: 'Restart completed',
+              sendToRequester: false,
+            ),
+        sessions: SessionStore(),
+      );
+
+      await _runUntilIdle(app);
+      expect(telegram.sentMessages, isEmpty);
+    });
+
     test('keeps typing alive during longer codex runs', () async {
       final telegram = _FakeTelegramClient(
         updates: <List<TelegramUpdate>>[
@@ -647,6 +800,10 @@ AppConfig _config(
         command: 'new', description: 'Start a new session'),
     ConfiguredTelegramCommand(
         command: 'stop', description: 'Stop the active AI CLI run'),
+    ConfiguredTelegramCommand(
+      command: 'restart',
+      description: 'Restart all bots and reload config',
+    ),
   ],
 }) {
   return AppConfig(
@@ -670,12 +827,14 @@ class _FakeTelegramClient extends TelegramClient {
     this.updates = const <List<TelegramUpdate>>[],
     this.throwOnSetCommands = false,
     this.throwOnChatAction = false,
+    this.throwOnSendMessage = false,
     this.getUpdatesErrors = 0,
   }) : super('TOKEN');
 
   final List<List<TelegramUpdate>> updates;
   final bool throwOnSetCommands;
   final bool throwOnChatAction;
+  final bool throwOnSendMessage;
   int getUpdatesErrors;
 
   int _updateIndex = 0;
@@ -710,6 +869,11 @@ class _FakeTelegramClient extends TelegramClient {
 
   @override
   Future<void> sendMessage({required int chatId, required String text}) async {
+    if (throwOnSendMessage) {
+      throw const HttpException(
+        'ClientException: HTTP request failed. Client is already closed.',
+      );
+    }
     sentMessages.add(_SentMessage(chatId: chatId, text: text));
   }
 

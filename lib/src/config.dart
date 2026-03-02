@@ -112,6 +112,10 @@ class AppConfig {
       command: 'stop',
       description: 'Stop the active AI CLI run',
     ),
+    ConfiguredTelegramCommand(
+      command: 'restart',
+      description: 'Restart all bots and reload config',
+    ),
   ];
 
   static const Set<String> _rootKeys = <String>{'defaults', 'bots'};

@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:args/command_runner.dart';
-import 'package:tgbot/src/app.dart';
 import 'package:tgbot/src/config.dart';
 import 'package:tgbot/src/default_config_template.dart';
+import 'package:tgbot/src/runtime/supervisor.dart';
 import 'package:tgbot/src/version.dart';
 
 /// Entry point for the `tgbot` CLI.
@@ -80,17 +80,13 @@ class StartCommand extends Command<void> {
   Future<void> run() async {
     // CLI path to the YAML configuration file.
     final configPath = argResults!['config'] as String;
-    // Parsed bot configurations loaded from disk.
     final configs = AppConfig.loadMany(path: configPath);
-    // Running app instances created from the parsed configs.
-    final apps = configs
-        .map((config) => BridgeApp.fromConfig(config))
-        .toList(growable: false);
-    stdout.writeln('Starting ${apps.length} bot(s) from $configPath …');
+    stdout.writeln('Starting ${configs.length} bot(s) from $configPath …');
+    final supervisor = BotSupervisor(configPath: configPath);
 
     Future<void> handleShutdown(String signalName) async {
       stdout.writeln('Received $signalName, stopping bots...');
-      await Future.wait(apps.map((app) => app.stop()));
+      await supervisor.stop();
     }
 
     StreamSubscription<ProcessSignal>? sigIntSub;
@@ -111,11 +107,11 @@ class StartCommand extends Command<void> {
     }
 
     try {
-      await Future.wait(apps.map((app) => app.run()));
+      await supervisor.run();
     } finally {
       await sigIntSub?.cancel();
       await sigTermSub?.cancel();
-      await Future.wait(apps.map((app) => app.stop()));
+      await supervisor.stop();
     }
   }
 }
