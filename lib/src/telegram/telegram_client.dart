@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:collection';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
 import 'package:tgbot/src/models/telegram_models.dart';
+import 'package:tgbot/src/telegram/telegram_text_formatter.dart';
 
 /// Thin Telegram Bot API client with simple retry behavior.
 class TelegramClient {
@@ -15,6 +17,7 @@ class TelegramClient {
 
   /// Shared HTTP client used for requests.
   final http.Client _client;
+  final TelegramTextFormatter _formatter = TelegramTextFormatter();
 
   /// Builds the API endpoint URI for a Telegram method.
   Uri _uri(String method) =>
@@ -61,11 +64,23 @@ class TelegramClient {
   /// Sends a text message, splitting long responses into safe chunks.
   Future<void> sendMessage({required int chatId, required String text}) async {
     if (text.trim().isEmpty) return;
-    for (final part in _chunk(text, 4000)) {
-      await _postWithRetry(
-        'sendMessage',
-        jsonEncode(<String, dynamic>{'chat_id': chatId, 'text': part}),
-      );
+    for (final chunk in _buildFormattedChunks(text, _plainChunkLimit)) {
+      final htmlPayload = <String, dynamic>{
+        'chat_id': chatId,
+        'text': chunk.html,
+        'parse_mode': 'HTML',
+      };
+      try {
+        await _postWithRetry('sendMessage', jsonEncode(htmlPayload));
+      } on HttpException catch (error) {
+        if (!_isEntityParseError(error)) {
+          rethrow;
+        }
+        await _postWithRetry(
+          'sendMessage',
+          jsonEncode(<String, dynamic>{'chat_id': chatId, 'text': chunk.plain}),
+        );
+      }
     }
   }
 
@@ -86,16 +101,31 @@ class TelegramClient {
     required String filePath,
     String? caption,
   }) async {
-    await _multipartWithRetry('sendPhoto', () async {
-      // Multipart request for the photo upload.
-      final req = http.MultipartRequest('POST', _uri('sendPhoto'))
-        ..fields['chat_id'] = '$chatId';
-      if (caption != null && caption.isNotEmpty) {
-        req.fields['caption'] = caption;
+    final formattedCaption = _formatCaption(caption);
+    try {
+      await _multipartWithRetry('sendPhoto', () async {
+        // Multipart request for the photo upload.
+        final req = http.MultipartRequest('POST', _uri('sendPhoto'))
+          ..fields['chat_id'] = '$chatId';
+        if (formattedCaption != null) {
+          req.fields['caption'] = formattedCaption.html;
+          req.fields['parse_mode'] = 'HTML';
+        }
+        req.files.add(await http.MultipartFile.fromPath('photo', filePath));
+        return req;
+      });
+    } on HttpException catch (error) {
+      if (formattedCaption == null || !_isEntityParseError(error)) {
+        rethrow;
       }
-      req.files.add(await http.MultipartFile.fromPath('photo', filePath));
-      return req;
-    });
+      await _multipartWithRetry('sendPhoto', () async {
+        final req = http.MultipartRequest('POST', _uri('sendPhoto'))
+          ..fields['chat_id'] = '$chatId'
+          ..fields['caption'] = formattedCaption.plain;
+        req.files.add(await http.MultipartFile.fromPath('photo', filePath));
+        return req;
+      });
+    }
   }
 
   /// Uploads a generic file as a Telegram document.
@@ -104,16 +134,31 @@ class TelegramClient {
     required String filePath,
     String? caption,
   }) async {
-    await _multipartWithRetry('sendDocument', () async {
-      // Multipart request for the document upload.
-      final req = http.MultipartRequest('POST', _uri('sendDocument'))
-        ..fields['chat_id'] = '$chatId';
-      if (caption != null && caption.isNotEmpty) {
-        req.fields['caption'] = caption;
+    final formattedCaption = _formatCaption(caption);
+    try {
+      await _multipartWithRetry('sendDocument', () async {
+        // Multipart request for the document upload.
+        final req = http.MultipartRequest('POST', _uri('sendDocument'))
+          ..fields['chat_id'] = '$chatId';
+        if (formattedCaption != null) {
+          req.fields['caption'] = formattedCaption.html;
+          req.fields['parse_mode'] = 'HTML';
+        }
+        req.files.add(await http.MultipartFile.fromPath('document', filePath));
+        return req;
+      });
+    } on HttpException catch (error) {
+      if (formattedCaption == null || !_isEntityParseError(error)) {
+        rethrow;
       }
-      req.files.add(await http.MultipartFile.fromPath('document', filePath));
-      return req;
-    });
+      await _multipartWithRetry('sendDocument', () async {
+        final req = http.MultipartRequest('POST', _uri('sendDocument'))
+          ..fields['chat_id'] = '$chatId'
+          ..fields['caption'] = formattedCaption.plain;
+        req.files.add(await http.MultipartFile.fromPath('document', filePath));
+        return req;
+      });
+    }
   }
 
   /// Closes the underlying HTTP client.
@@ -153,8 +198,52 @@ class TelegramClient {
     return parts;
   }
 
+  /// Returns plain/html chunk pairs bounded to Telegram limits.
+  List<_FormattedChunk> _buildFormattedChunks(String text, int maxPlainLen) {
+    final out = <_FormattedChunk>[];
+    final queue = ListQueue<String>.from(_chunk(text, maxPlainLen));
+    while (queue.isNotEmpty) {
+      final plain = queue.removeFirst();
+      if (plain.isEmpty) {
+        continue;
+      }
+      final formatted = _formatter.format(plain);
+      if (formatted.html.length <= _messageMaxLen) {
+        out.add(_FormattedChunk(plain: formatted.plain, html: formatted.html));
+        continue;
+      }
+      if (plain.length <= 1) {
+        out.add(_FormattedChunk(plain: formatted.plain, html: formatted.html));
+        continue;
+      }
+      final nextChunks = _chunk(plain, (plain.length / 2).floor());
+      if (nextChunks.length <= 1) {
+        out.add(_FormattedChunk(plain: formatted.plain, html: formatted.html));
+        continue;
+      }
+      for (var i = nextChunks.length - 1; i >= 0; i--) {
+        queue.addFirst(nextChunks[i]);
+      }
+    }
+    return out;
+  }
+
+  TelegramFormattedText? _formatCaption(String? caption) {
+    if (caption == null || caption.isEmpty) {
+      return null;
+    }
+    return _formatter.format(caption);
+  }
+
+  bool _isEntityParseError(HttpException error) {
+    final text = error.message.toLowerCase();
+    return text.contains('parse entities');
+  }
+
   /// Maximum retries after a Telegram rate-limit response.
   static const int _maxRetries = 3;
+  static const int _messageMaxLen = 4000;
+  static const int _plainChunkLimit = 3900;
 
   /// Sends a JSON POST request with retry support for HTTP 429.
   Future<Map<String, dynamic>> _postWithRetry(
@@ -250,6 +339,13 @@ class TelegramClient {
       );
     }
   }
+}
+
+class _FormattedChunk {
+  _FormattedChunk({required this.plain, required this.html});
+
+  final String plain;
+  final String html;
 }
 
 /// Telegram command descriptor sent to `setMyCommands`.

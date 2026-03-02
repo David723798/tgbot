@@ -85,11 +85,13 @@ void main() {
         }),
       );
 
-      final text = '${'a' * 3995}\nrest ${'b' * 20}';
+      final text = '${'a' * 3895}\nrest ${'b' * 20}';
       await client.sendMessage(chatId: 1, text: text);
       await client.sendMessage(chatId: 1, text: '   ');
 
       expect(sent, hasLength(2));
+      expect(sent[0]['parse_mode'], 'HTML');
+      expect(sent[1]['parse_mode'], 'HTML');
       expect(sent[0]['text'].toString().length, lessThanOrEqualTo(4000));
       expect(sent[0]['text'], endsWith('\n'));
       expect(sent[1]['text'], contains('rest'));
@@ -107,12 +109,100 @@ void main() {
         }),
       );
 
-      final text = '${'a' * 3995} rest ${'b' * 20}';
+      final text = '${'a' * 3895} rest ${'b' * 20}';
       await client.sendMessage(chatId: 1, text: text);
 
       expect(sent, hasLength(2));
+      expect(sent.first['parse_mode'], 'HTML');
       expect(sent.first['text'], endsWith(' '));
       expect(sent.first['text'], contains('rest '));
+    });
+
+    test('sendMessage formats markdown-like content as Telegram HTML', () async {
+      late Map<String, dynamic> body;
+      final client = TelegramClient(
+        'TOKEN',
+        client: MockClient((request) async {
+          body = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode(<String, dynamic>{'ok': true, 'result': true}),
+            200,
+          );
+        }),
+      );
+
+      await client.sendMessage(
+        chatId: 1,
+        text:
+            '```dart\nfinal x = 1 < 2;\n```\nUse `code` with **bold**, *it*, _it2_, ~~strike~~ and [site](https://example.com).',
+      );
+
+      final html = body['text'] as String;
+      expect(body['parse_mode'], 'HTML');
+      expect(html, contains('<pre><code>'));
+      expect(html, contains('&lt;'));
+      expect(html, contains('<code>code</code>'));
+      expect(html, contains('<b>bold</b>'));
+      expect(html, contains('<i>it</i>'));
+      expect(html, contains('<i>it2</i>'));
+      expect(html, contains('<s>strike</s>'));
+      expect(html, contains('<a href="https://example.com">site</a>'));
+    });
+
+    test('sendMessage keeps local-file markdown links as text', () async {
+      late Map<String, dynamic> body;
+      final client = TelegramClient(
+        'TOKEN',
+        client: MockClient((request) async {
+          body = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode(<String, dynamic>{'ok': true, 'result': true}),
+            200,
+          );
+        }),
+      );
+
+      await client.sendMessage(
+        chatId: 1,
+        text: 'See [report](file:///tmp/report.txt) and [ok](https://example.com).',
+      );
+
+      final html = body['text'] as String;
+      expect(html, contains('[report](file:///tmp/report.txt)'));
+      expect(html, contains('<a href="https://example.com">ok</a>'));
+    });
+
+    test('sendMessage retries parse entity errors as plain text', () async {
+      final sent = <Map<String, dynamic>>[];
+      var attempts = 0;
+      final client = TelegramClient(
+        'TOKEN',
+        client: MockClient((request) async {
+          attempts++;
+          final payload = jsonDecode(request.body) as Map<String, dynamic>;
+          sent.add(payload);
+          if (attempts == 1) {
+            return http.Response(
+              jsonEncode(<String, dynamic>{
+                'ok': false,
+                'description': "Bad Request: can't parse entities",
+              }),
+              400,
+            );
+          }
+          return http.Response(
+            jsonEncode(<String, dynamic>{'ok': true, 'result': true}),
+            200,
+          );
+        }),
+      );
+
+      await client.sendMessage(chatId: 1, text: '**bold**');
+
+      expect(sent, hasLength(2));
+      expect(sent[0]['parse_mode'], 'HTML');
+      expect(sent[1].containsKey('parse_mode'), isFalse);
+      expect(sent[1]['text'], '**bold**');
     });
 
     test('retries 429 responses and honors retry_after when present', () async {
@@ -269,10 +359,13 @@ void main() {
       expect(requests[0].body, contains('1'));
       expect(requests[0].body, contains('name="caption"'));
       expect(requests[0].body, contains('Photo'));
+      expect(requests[0].body, contains('name="parse_mode"'));
+      expect(requests[0].body, contains('HTML'));
       expect(requests[0].body, contains('name="photo"'));
       expect(requests[1].uri.path, '/botTOKEN/sendDocument');
       expect(requests[1].body, contains('name="document"'));
       expect(requests[1].body, contains('Doc'));
+      expect(requests[1].body, contains('name="parse_mode"'));
     });
 
     test('multipart requests retry 429 responses', () async {
@@ -295,6 +388,39 @@ void main() {
               _MultipartHttpOverrides(responses, requests).createHttpClient);
 
       expect(requests, hasLength(2));
+    });
+
+    test('multipart caption parse errors retry with plain caption', () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-telegram-');
+      addTearDown(() => tempDir.delete(recursive: true));
+
+      final photo = File('${tempDir.path}/photo.png')
+        ..writeAsStringSync('image');
+      final requests = <_CapturedMultipartRequest>[];
+      final responses = <_QueuedResponse>[
+        _QueuedResponse(
+          400,
+          '{"ok":false,"description":"Bad Request: can\'t parse entities"}',
+        ),
+        _QueuedResponse(200, '{"ok":true,"result":true}'),
+      ];
+
+      await HttpOverrides.runZoned(() async {
+        final client = TelegramClient('TOKEN');
+        await client.sendPhoto(
+          chatId: 1,
+          filePath: photo.path,
+          caption: '**Photo**',
+        );
+      },
+          createHttpClient:
+              _MultipartHttpOverrides(responses, requests).createHttpClient);
+
+      expect(requests, hasLength(2));
+      expect(requests.first.body, contains('name="parse_mode"'));
+      expect(requests.first.body, contains('HTML'));
+      expect(requests.last.body, isNot(contains('name="parse_mode"')));
+      expect(requests.last.body, contains('**Photo**'));
     });
   });
 }
