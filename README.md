@@ -157,6 +157,8 @@ bots:
     project_path: /absolute/path/to/repo-b
     additional_system_prompt: |
       Keep answers brief and focus on production issues.
+    memory: true
+    memory_filename: TEAM_MEMORY.md
 ```
 
 ### Bot fields
@@ -172,7 +174,9 @@ bots:
 | `ai_cli_args` | No | Extra args passed to the provider CLI; accepts a YAML list or whitespace-delimited string |
 | `poll_timeout_sec` | No | Telegram long-poll timeout in seconds, default `60` |
 | `ai_cli_timeout_sec` | No | Per-request provider timeout in seconds, default `1000` |
-| `additional_system_prompt` | No | Extra system instructions prepended before each user request |
+| `additional_system_prompt` | No | Extra system instructions prepended only for the first question in a session |
+| `memory` | No | When `true`, injects memory-file management instructions only for the first question in a session; default `false` |
+| `memory_filename` | No | Filename used by memory instructions when `memory` is enabled; default `MEMORY.md` |
 | `final_response_only` | No | When `true`, suppresses streamed partial messages and sends only the final assistant response, default `false` |
 | `telegram_commands` | No | Extra Telegram slash commands registered for this bot |
 | `log_level` | No | Runtime log level: `debug`, `info`, `warn`, `error`; default `info` |

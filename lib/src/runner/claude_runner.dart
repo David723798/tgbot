@@ -10,6 +10,8 @@ class ClaudeRunner extends BaseRunner {
     required super.projectPath,
     required super.timeout,
     super.additionalSystemPrompt,
+    super.memory,
+    super.memoryFilename,
   });
 
   @override

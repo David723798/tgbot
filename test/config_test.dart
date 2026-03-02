@@ -20,6 +20,8 @@ defaults:
   poll_timeout_sec: "15"
   ai_cli_timeout_sec: 90
   additional_system_prompt: "   keep answers short   "
+  memory: true
+  memory_filename: TEAM_MEMORY.md
   final_response_only: true
   telegram_commands:
     - command: fix
@@ -47,6 +49,8 @@ bots:
       expect(config.pollTimeoutSec, 15);
       expect(config.aiCliTimeout, const Duration(seconds: 90));
       expect(config.additionalSystemPrompt, 'keep answers short');
+      expect(config.memory, isTrue);
+      expect(config.memoryFilename, 'TEAM_MEMORY.md');
       expect(config.finalResponseOnly, isTrue);
       expect(
         config.aiCliArgs,
@@ -85,6 +89,8 @@ bots:
       - " "
       - workspace-write
     additional_system_prompt: "   "
+    memory: false
+    memory_filename: "   "
     final_response_only: false
     provider: opencode
     telegram_commands:
@@ -105,6 +111,8 @@ bots:
       );
       expect(config.provider, AiProvider.opencode);
       expect(config.additionalSystemPrompt, isNull);
+      expect(config.memory, isFalse);
+      expect(config.memoryFilename, 'MEMORY.md');
       expect(config.finalResponseOnly, isFalse);
       expect(
         config.telegramCommands.map((command) => command.command),
@@ -116,8 +124,7 @@ bots:
       final tempDir = await Directory.systemTemp.createTemp('tgbot-config-');
       addTearDown(() => tempDir.delete(recursive: true));
 
-      final file = File('${tempDir.path}/restart.yaml')
-        ..writeAsStringSync('''
+      final file = File('${tempDir.path}/restart.yaml')..writeAsStringSync('''
 bots:
   - name: bot
     telegram_bot_token: TOKEN
@@ -133,7 +140,8 @@ bots:
         config.telegramCommands.map((command) => command.command),
         <String>['restart', 'start', 'new', 'stop'],
       );
-      expect(config.telegramCommands.first.description, 'Custom restart behavior');
+      expect(
+          config.telegramCommands.first.description, 'Custom restart behavior');
     });
 
     test('throws for missing files and malformed configs', () async {
@@ -340,8 +348,7 @@ bots:
       final tempDir = await Directory.systemTemp.createTemp('tgbot-config-');
       addTearDown(() => tempDir.delete(recursive: true));
 
-      final file = File('${tempDir.path}/strict.yaml')
-        ..writeAsStringSync('''
+      final file = File('${tempDir.path}/strict.yaml')..writeAsStringSync('''
 defaults:
   strict_config: true
 bots:

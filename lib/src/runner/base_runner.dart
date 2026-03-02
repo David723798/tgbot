@@ -17,6 +17,8 @@ abstract class BaseRunner implements AiCliRunner {
     required this.projectPath,
     required this.timeout,
     this.additionalSystemPrompt,
+    this.memory = false,
+    this.memoryFilename = 'MEMORY.md',
   });
 
   /// Executable used to launch the provider CLI.
@@ -33,6 +35,12 @@ abstract class BaseRunner implements AiCliRunner {
 
   /// Extra system prompt appended ahead of the user request.
   final String? additionalSystemPrompt;
+
+  /// Whether memory instructions should be injected on first turn.
+  final bool memory;
+
+  /// Memory file name referenced in first-turn memory instructions.
+  final String memoryFilename;
 
   /// Human-readable provider name used in timeout error messages.
   String get providerName;
@@ -90,9 +98,13 @@ abstract class BaseRunner implements AiCliRunner {
     FutureOr<void> Function(String message)? onAssistantMessage,
     void Function(Future<void> Function() cancel)? onCancelReady,
   }) async {
+    final isFirstSessionQuestion = threadId == null || threadId.isEmpty;
     final wrappedPrompt = normalizePromptForProcessArg(buildPrompt(
       userPrompt: prompt,
       additionalSystemPrompt: additionalSystemPrompt,
+      includeAdditionalSystemPrompt: isFirstSessionQuestion,
+      includeMemoryInstruction: isFirstSessionQuestion && memory,
+      memoryFilename: memoryFilename,
     ));
     final processArgs = buildProcessArgs(
       wrappedPrompt: wrappedPrompt,

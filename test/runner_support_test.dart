@@ -29,6 +29,8 @@ void main() {
       final result = buildPrompt(
         userPrompt: 'Fix the bug',
         additionalSystemPrompt: null,
+        includeAdditionalSystemPrompt: true,
+        includeMemoryInstruction: false,
       );
 
       expect(result, contains(bridgeInstruction));
@@ -41,6 +43,8 @@ void main() {
       final result = buildPrompt(
         userPrompt: 'Fix the bug',
         additionalSystemPrompt: 'Be brief.',
+        includeAdditionalSystemPrompt: true,
+        includeMemoryInstruction: false,
       );
 
       expect(result, contains(bridgeInstruction));
@@ -53,9 +57,50 @@ void main() {
       final result = buildPrompt(
         userPrompt: 'Hello',
         additionalSystemPrompt: '',
+        includeAdditionalSystemPrompt: true,
+        includeMemoryInstruction: false,
       );
 
       expect(result, isNot(contains('ADDITIONAL SYSTEM INSTRUCTIONS')));
+    });
+
+    test('skips additional system prompt after first session question', () {
+      final result = buildPrompt(
+        userPrompt: 'Follow up',
+        additionalSystemPrompt: 'Be brief.',
+        includeAdditionalSystemPrompt: false,
+        includeMemoryInstruction: false,
+      );
+
+      expect(result, isNot(contains('ADDITIONAL SYSTEM INSTRUCTIONS')));
+      expect(result, contains('USER REQUEST:\nFollow up'));
+    });
+
+    test('includes memory instructions when enabled', () {
+      final result = buildPrompt(
+        userPrompt: 'First question',
+        additionalSystemPrompt: null,
+        includeAdditionalSystemPrompt: false,
+        includeMemoryInstruction: true,
+      );
+
+      expect(result, contains('MEMORY INSTRUCTIONS:'));
+      expect(result, contains('`MEMORY.md`'));
+      expect(result, contains('USER REQUEST:\nFirst question'));
+    });
+
+    test('uses custom memory filename when provided', () {
+      final result = buildPrompt(
+        userPrompt: 'First question',
+        additionalSystemPrompt: null,
+        includeAdditionalSystemPrompt: false,
+        includeMemoryInstruction: true,
+        memoryFilename: 'TEAM_MEMORY.md',
+      );
+
+      expect(result, contains('MEMORY INSTRUCTIONS:'));
+      expect(result, contains('`TEAM_MEMORY.md`'));
+      expect(result, contains('USER REQUEST:\nFirst question'));
     });
   });
 

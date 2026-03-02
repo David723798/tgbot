@@ -45,6 +45,8 @@ class AppConfig {
     required this.pollTimeoutSec,
     required this.aiCliTimeout,
     required this.additionalSystemPrompt,
+    this.memory = false,
+    this.memoryFilename = 'MEMORY.md',
     required this.finalResponseOnly,
     required this.telegramCommands,
   });
@@ -91,6 +93,12 @@ class AppConfig {
   /// Optional extra system prompt prepended to every provider request.
   final String? additionalSystemPrompt;
 
+  /// Whether to inject MEMORY.md management instructions on first turn.
+  final bool memory;
+
+  /// Memory instructions filename injected on first turn when [memory] is true.
+  final String memoryFilename;
+
   /// Whether Telegram should receive only the final assistant response.
   final bool finalResponseOnly;
 
@@ -127,6 +135,8 @@ class AppConfig {
     'poll_timeout_sec',
     'ai_cli_timeout_sec',
     'additional_system_prompt',
+    'memory',
+    'memory_filename',
     'final_response_only',
     'telegram_commands',
     'log_level',
@@ -145,6 +155,8 @@ class AppConfig {
     'poll_timeout_sec',
     'ai_cli_timeout_sec',
     'additional_system_prompt',
+    'memory',
+    'memory_filename',
     'final_response_only',
     'telegram_commands',
     'log_level',
@@ -229,26 +241,27 @@ class AppConfig {
       _optionalString(bot, 'provider') ?? _optionalString(defaults, 'provider'),
       path: '$path.provider',
     );
-    final token =
-        _requiredString(bot, 'telegram_bot_token', path: '$path.telegram_bot_token');
-    final allowedUsers =
-        _requiredIntList(bot, 'allowed_user_ids', path: '$path.allowed_user_ids');
+    final token = _requiredString(bot, 'telegram_bot_token',
+        path: '$path.telegram_bot_token');
+    final allowedUsers = _requiredIntList(bot, 'allowed_user_ids',
+        path: '$path.allowed_user_ids');
 
-    final pollTimeout = _optionalInt(bot, 'poll_timeout_sec', path: '$path.poll_timeout_sec') ??
-        _optionalInt(
-          defaults,
-          'poll_timeout_sec',
-          path: 'defaults.poll_timeout_sec',
-        ) ??
-        60;
-    final aiCliTimeoutSec =
-        _optionalInt(bot, 'ai_cli_timeout_sec', path: '$path.ai_cli_timeout_sec') ??
+    final pollTimeout =
+        _optionalInt(bot, 'poll_timeout_sec', path: '$path.poll_timeout_sec') ??
             _optionalInt(
               defaults,
-              'ai_cli_timeout_sec',
-              path: 'defaults.ai_cli_timeout_sec',
+              'poll_timeout_sec',
+              path: 'defaults.poll_timeout_sec',
             ) ??
-            1000;
+            60;
+    final aiCliTimeoutSec = _optionalInt(bot, 'ai_cli_timeout_sec',
+            path: '$path.ai_cli_timeout_sec') ??
+        _optionalInt(
+          defaults,
+          'ai_cli_timeout_sec',
+          path: 'defaults.ai_cli_timeout_sec',
+        ) ??
+        1000;
 
     final projectPathRaw = _optionalString(bot, 'project_path') ??
         _optionalString(defaults, 'project_path');
@@ -263,13 +276,29 @@ class AppConfig {
         _optionalString(defaults, 'ai_cli_cmd') ??
         _defaultCommandForProvider(provider);
 
-    final aiCliArgsRaw = _asArgs(bot['ai_cli_args'], path: '$path.ai_cli_args') ??
-        _asArgs(defaults['ai_cli_args'], path: 'defaults.ai_cli_args') ??
-        const <String>[];
+    final aiCliArgsRaw =
+        _asArgs(bot['ai_cli_args'], path: '$path.ai_cli_args') ??
+            _asArgs(defaults['ai_cli_args'], path: 'defaults.ai_cli_args') ??
+            const <String>[];
     final aiCliArgs = aiCliArgsRaw;
     final additionalSystemPrompt =
         _optionalString(bot, 'additional_system_prompt') ??
             _optionalString(defaults, 'additional_system_prompt');
+    final memory = _optionalBool(
+          bot,
+          'memory',
+          path: '$path.memory',
+        ) ??
+        _optionalBool(
+          defaults,
+          'memory',
+          path: 'defaults.memory',
+        ) ??
+        false;
+    final memoryFilename = _normalizeMemoryFilename(
+      _optionalString(bot, 'memory_filename') ??
+          _optionalString(defaults, 'memory_filename'),
+    );
     final finalResponseOnly = _optionalBool(
           bot,
           'final_response_only',
@@ -282,11 +311,13 @@ class AppConfig {
         ) ??
         false;
     final botLogLevel = _parseLogLevel(
-      _optionalString(bot, 'log_level') ?? _optionalString(defaults, 'log_level'),
+      _optionalString(bot, 'log_level') ??
+          _optionalString(defaults, 'log_level'),
       path: '$path.log_level',
     );
     final botLogFormat = _parseLogFormat(
-      _optionalString(bot, 'log_format') ?? _optionalString(defaults, 'log_format'),
+      _optionalString(bot, 'log_format') ??
+          _optionalString(defaults, 'log_format'),
       path: '$path.log_format',
     );
     final validateProjectPath = _optionalBool(
@@ -350,6 +381,8 @@ class AppConfig {
       pollTimeoutSec: pollTimeout,
       aiCliTimeout: Duration(seconds: aiCliTimeoutSec),
       additionalSystemPrompt: _normalizeOptionalPrompt(additionalSystemPrompt),
+      memory: memory,
+      memoryFilename: memoryFilename,
       finalResponseOnly: finalResponseOnly,
       telegramCommands: telegramCommands,
     );
@@ -441,8 +474,18 @@ class AppConfig {
     return trimmed.isEmpty ? null : trimmed;
   }
 
+  /// Trims memory filename and defaults blank values to MEMORY.md.
+  static String _normalizeMemoryFilename(String? value) {
+    if (value == null) {
+      return 'MEMORY.md';
+    }
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? 'MEMORY.md' : trimmed;
+  }
+
   /// Reads a required string from a YAML map.
-  static String _requiredString(YamlMap map, String key, {required String path}) {
+  static String _requiredString(YamlMap map, String key,
+      {required String path}) {
     final value = _optionalString(map, key);
     if (value == null || value.isEmpty) {
       throw ConfigException('Missing required key: $key', path: path);
@@ -619,7 +662,9 @@ class AppConfig {
     if (token.isNotEmpty) {
       out.add(token.toString());
     }
-    return out.where((entry) => entry.trim().isNotEmpty).toList(growable: false);
+    return out
+        .where((entry) => entry.trim().isNotEmpty)
+        .toList(growable: false);
   }
 
   /// Parses the optional `telegram_commands` YAML list.
@@ -649,7 +694,8 @@ class AppConfig {
           path: '$path[$i]',
         );
       }
-      final command = _requiredString(entry, 'command', path: '$path[$i].command');
+      final command =
+          _requiredString(entry, 'command', path: '$path[$i].command');
       final description =
           _requiredString(entry, 'description', path: '$path[$i].description');
       _validateTelegramCommand(command, path: '$path[$i].command');

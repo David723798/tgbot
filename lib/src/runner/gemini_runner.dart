@@ -12,6 +12,8 @@ class GeminiRunner extends BaseRunner {
     required super.projectPath,
     required super.timeout,
     super.additionalSystemPrompt,
+    super.memory,
+    super.memoryFilename,
   });
 
   @override
@@ -45,9 +47,7 @@ class GeminiRunner extends BaseRunner {
     if (messages.isEmpty) {
       messages = <String>[stdoutText.trim()];
     }
-    return messages
-        .where((m) => m.trim().isNotEmpty)
-        .toList(growable: false);
+    return messages.where((m) => m.trim().isNotEmpty).toList(growable: false);
   }
 
   @override

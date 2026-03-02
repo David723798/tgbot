@@ -28,6 +28,8 @@ bots:
     #   - --model
     #   - gpt-5
     # ai_cli_timeout_sec: 1000
+    # memory: false            # add memory file instructions on first session question
+    # memory_filename: MEMORY.md # customize the filename used by memory instructions
     # Optional runtime logging options.
     # log_level: info            # debug, info, warn, error
     # log_format: text           # text or json

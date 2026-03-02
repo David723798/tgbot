@@ -15,20 +15,38 @@ const String bridgeInstruction = 'SYSTEM FOR TELEGRAM BRIDGE:\n'
     '- Keep all normal user-facing text separate from the TG_ARTIFACT line.\n'
     '- Do not use Markdown links for artifact delivery when this line is present.\n';
 
+/// Builds optional memory-management instructions for first-turn prompts.
+String buildMemoryInstruction(String memoryFilename) {
+  return 'First, please read the `$memoryFilename` file.\n'
+      'If needed, update the `$memoryFilename` file.\n'
+      'Also, make sure the `$memoryFilename` file does not exceed 200 lines in length.';
+}
+
 /// Builds the final prompt sent to the provider CLI.
 String buildPrompt({
   required String userPrompt,
   required String? additionalSystemPrompt,
+  required bool includeAdditionalSystemPrompt,
+  required bool includeMemoryInstruction,
+  String memoryFilename = 'MEMORY.md',
 }) {
+  final sections = <String>[
+    bridgeInstruction.trimRight(),
+  ];
   final extra = additionalSystemPrompt;
-  if (extra == null || extra.isEmpty) {
-    return '$bridgeInstruction\nUSER REQUEST:\n$userPrompt';
-  }
-  return '$bridgeInstruction\n'
+  if (includeAdditionalSystemPrompt && extra != null && extra.isNotEmpty) {
+    sections.add(
       'ADDITIONAL SYSTEM INSTRUCTIONS FOR THIS BOT:\n'
-      '$extra\n\n'
-      'USER REQUEST:\n'
-      '$userPrompt';
+      '$extra',
+    );
+  }
+  if (includeMemoryInstruction) {
+    sections.add(
+      'MEMORY INSTRUCTIONS:\n${buildMemoryInstruction(memoryFilename)}',
+    );
+  }
+  sections.add('USER REQUEST:\n$userPrompt');
+  return sections.join('\n\n');
 }
 
 /// Normalizes prompt arguments for Windows shell-backed invocations.

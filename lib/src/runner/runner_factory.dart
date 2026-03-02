@@ -14,6 +14,8 @@ AiCliRunner createRunner(AppConfig config) {
         projectPath: config.projectPath,
         timeout: config.aiCliTimeout,
         additionalSystemPrompt: config.additionalSystemPrompt,
+        memory: config.memory,
+        memoryFilename: config.memoryFilename,
       );
     case AiProvider.opencode:
       return OpenCodeRunner(
@@ -22,6 +24,8 @@ AiCliRunner createRunner(AppConfig config) {
         projectPath: config.projectPath,
         timeout: config.aiCliTimeout,
         additionalSystemPrompt: config.additionalSystemPrompt,
+        memory: config.memory,
+        memoryFilename: config.memoryFilename,
       );
     case AiProvider.gemini:
       return GeminiRunner(
@@ -30,6 +34,8 @@ AiCliRunner createRunner(AppConfig config) {
         projectPath: config.projectPath,
         timeout: config.aiCliTimeout,
         additionalSystemPrompt: config.additionalSystemPrompt,
+        memory: config.memory,
+        memoryFilename: config.memoryFilename,
       );
     case AiProvider.claude:
       return ClaudeRunner(
@@ -38,6 +44,8 @@ AiCliRunner createRunner(AppConfig config) {
         projectPath: config.projectPath,
         timeout: config.aiCliTimeout,
         additionalSystemPrompt: config.additionalSystemPrompt,
+        memory: config.memory,
+        memoryFilename: config.memoryFilename,
       );
   }
 }

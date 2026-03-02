@@ -176,6 +176,99 @@ printf '%s\n' 'Image: ![ Chart ](<images/chart.PNG>)'
       expect(result.artifacts.single.caption, 'Chart');
     });
 
+    test('omits additional system prompt for follow-up session questions',
+        () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-codex-');
+      addTearDown(() => tempDir.delete(recursive: true));
+
+      final script = await _writeScript(
+        tempDir,
+        r'''
+last_arg=""
+for arg in "$@"; do
+  last_arg="$arg"
+done
+printf '%s\n' "$last_arg"
+''',
+      );
+      final runner = CodexRunner(
+        command: '/bin/sh',
+        args: <String>[script.path],
+        projectPath: tempDir.path,
+        timeout: const Duration(seconds: 1),
+        additionalSystemPrompt: 'follow policy',
+      );
+
+      final result = await runner.runPrompt(
+        prompt: 'follow-up',
+        threadId: 'thread-existing',
+      );
+
+      expect(result.messages.first,
+          isNot(contains('ADDITIONAL SYSTEM INSTRUCTIONS')));
+      expect(result.messages.first, contains('USER REQUEST:\nfollow-up'));
+    });
+
+    test('includes memory instructions on first session question', () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-codex-');
+      addTearDown(() => tempDir.delete(recursive: true));
+
+      final script = await _writeScript(
+        tempDir,
+        r'''
+last_arg=""
+for arg in "$@"; do
+  last_arg="$arg"
+done
+printf '%s\n' "$last_arg"
+''',
+      );
+      final runner = CodexRunner(
+        command: '/bin/sh',
+        args: <String>[script.path],
+        projectPath: tempDir.path,
+        timeout: const Duration(seconds: 1),
+        memory: true,
+        memoryFilename: 'TEAM_MEMORY.md',
+      );
+
+      final result = await runner.runPrompt(prompt: 'first');
+
+      expect(result.messages.first, contains('MEMORY INSTRUCTIONS:'));
+      expect(result.messages.first, contains('`TEAM_MEMORY.md`'));
+    });
+
+    test('omits memory instructions on follow-up session questions', () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-codex-');
+      addTearDown(() => tempDir.delete(recursive: true));
+
+      final script = await _writeScript(
+        tempDir,
+        r'''
+last_arg=""
+for arg in "$@"; do
+  last_arg="$arg"
+done
+printf '%s\n' "$last_arg"
+''',
+      );
+      final runner = CodexRunner(
+        command: '/bin/sh',
+        args: <String>[script.path],
+        projectPath: tempDir.path,
+        timeout: const Duration(seconds: 1),
+        memory: true,
+      );
+
+      final result = await runner.runPrompt(
+        prompt: 'follow-up',
+        threadId: 'thread-existing',
+      );
+
+      expect(result.messages.first, isNot(contains('MEMORY INSTRUCTIONS:')));
+      expect(result.messages.first, contains('USER REQUEST:\nfollow-up'));
+    });
+
     test(
         'parses additional assistant event shapes and ignores non-assistant items',
         () async {
