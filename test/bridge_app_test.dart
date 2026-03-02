@@ -132,7 +132,7 @@ void main() {
       expect(telegram.setCommandsCalls, 1);
       expect(telegram.sentMessages, hasLength(2));
       expect(telegram.sentMessages.first.text,
-          contains('Send any message to chat with Codex.'));
+          contains('Send any message to chat with Codex'));
       expect(telegram.sentMessages.first.text,
           contains('/start - Show usage help'));
       expect(telegram.sentMessages.first.text,
@@ -633,6 +633,7 @@ Future<void> _runUntilIdle(
     await app.run().timeout(timeout);
   } on TimeoutException {
     // Expected: the app is intentionally long-running.
+    await app.stop();
   }
 }
 
@@ -651,6 +652,7 @@ AppConfig _config(
   return AppConfig(
     name: 'bot',
     botToken: 'TOKEN',
+    logLevel: LogLevel.error,
     allowedUserIds: const <int>[1],
     aiCliCmd: 'codex',
     aiCliArgs: const <String>[],
@@ -745,7 +747,7 @@ class _FakeTelegramClient extends TelegramClient {
 
 class _FakeCodexRunner extends CodexRunner {
   _FakeCodexRunner({
-    required String projectPath,
+    required super.projectPath,
     this.result,
     this.streamedMessage,
     this.streamedMessages = const <String>[],
@@ -756,7 +758,6 @@ class _FakeCodexRunner extends CodexRunner {
   }) : super(
           command: 'codex',
           args: const <String>[],
-          projectPath: projectPath,
           timeout: const Duration(seconds: 1),
         );
 

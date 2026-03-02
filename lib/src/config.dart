@@ -5,11 +5,37 @@ import 'package:yaml/yaml.dart';
 /// Supported AI CLI providers.
 enum AiProvider { codex, opencode, gemini, claude }
 
+/// Supported runtime log levels.
+enum LogLevel { debug, info, warn, error }
+
+/// Supported runtime log output formats.
+enum LogFormat { text, json }
+
+/// Typed config parsing/validation error.
+class ConfigException implements Exception {
+  ConfigException(this.message, {this.path});
+
+  final String message;
+  final String? path;
+
+  @override
+  String toString() {
+    if (path == null || path!.isEmpty) {
+      return 'ConfigException: $message';
+    }
+    return 'ConfigException($path): $message';
+  }
+}
+
 /// Parsed runtime configuration for a single Telegram bot.
 class AppConfig {
   /// Creates an immutable bot configuration.
   AppConfig({
     this.provider = AiProvider.codex,
+    this.logLevel = LogLevel.info,
+    this.logFormat = LogFormat.text,
+    this.strictConfig = false,
+    this.validateProjectPath = false,
     required this.name,
     required this.botToken,
     required this.allowedUserIds,
@@ -28,6 +54,18 @@ class AppConfig {
 
   /// Provider selected for this bot.
   final AiProvider provider;
+
+  /// Minimum log level emitted by the runtime.
+  final LogLevel logLevel;
+
+  /// Log serialization format.
+  final LogFormat logFormat;
+
+  /// Whether strict key validation is enabled while parsing config.
+  final bool strictConfig;
+
+  /// Whether project path existence/readability should be validated.
+  final bool validateProjectPath;
 
   /// Telegram Bot API token.
   final String botToken;
@@ -76,37 +114,89 @@ class AppConfig {
     ),
   ];
 
+  static const Set<String> _rootKeys = <String>{'defaults', 'bots'};
+  static const Set<String> _defaultsKeys = <String>{
+    'provider',
+    'project_path',
+    'ai_cli_cmd',
+    'ai_cli_args',
+    'poll_timeout_sec',
+    'ai_cli_timeout_sec',
+    'additional_system_prompt',
+    'final_response_only',
+    'telegram_commands',
+    'log_level',
+    'log_format',
+    'strict_config',
+    'validate_project_path',
+  };
+  static const Set<String> _botKeys = <String>{
+    'name',
+    'telegram_bot_token',
+    'allowed_user_ids',
+    'provider',
+    'project_path',
+    'ai_cli_cmd',
+    'ai_cli_args',
+    'poll_timeout_sec',
+    'ai_cli_timeout_sec',
+    'additional_system_prompt',
+    'final_response_only',
+    'telegram_commands',
+    'log_level',
+    'log_format',
+    'strict_config',
+    'validate_project_path',
+  };
+  static const Set<String> _telegramCommandKeys = <String>{
+    'command',
+    'description',
+  };
+
   /// Loads all bot configurations declared in the YAML file at [path].
   static List<AppConfig> loadMany({String path = 'tgbot.yaml'}) {
-    // Configuration file to parse.
     final file = File(path);
     if (!file.existsSync()) {
-      throw StateError('Missing config file: $path');
+      throw ConfigException('Missing config file: $path');
     }
 
-    // Parsed root YAML document.
     final root = loadYaml(file.readAsStringSync());
     if (root is! YamlMap) {
-      throw StateError('Config root must be a map.');
+      throw ConfigException('Config root must be a map.', path: 'root');
     }
 
-    // Shared defaults inherited by each bot entry.
-    final defaults = _asMap(root['defaults']);
-    // Raw list of bot configuration entries.
+    final defaults = _asMap(root['defaults'], 'defaults');
+    final strictConfig = _optionalBool(defaults, 'strict_config',
+            path: 'defaults.strict_config') ??
+        false;
+
+    if (strictConfig) {
+      _validateKnownKeys(root, _rootKeys, path: 'root');
+      _validateKnownKeys(defaults, _defaultsKeys, path: 'defaults');
+    }
+
     final botsNode = root['bots'];
     if (botsNode is! YamlList || botsNode.isEmpty) {
-      throw StateError('Config must contain a non-empty bots list.');
+      throw ConfigException(
+        'Config must contain a non-empty bots list.',
+        path: 'bots',
+      );
     }
 
-    // Parsed configurations returned to the caller.
     final out = <AppConfig>[];
     for (var i = 0; i < botsNode.length; i++) {
-      // Current bot entry being validated.
       final node = botsNode[i];
       if (node is! YamlMap) {
-        throw StateError('bots[$i] must be a map.');
+        throw ConfigException('bots[$i] must be a map.', path: 'bots[$i]');
       }
-      out.add(_fromMap(index: i, bot: node, defaults: defaults));
+      out.add(
+        _fromMap(
+          index: i,
+          bot: node,
+          defaults: defaults,
+          strictConfig: strictConfig,
+        ),
+      );
     }
     return out;
   }
@@ -115,71 +205,144 @@ class AppConfig {
     required int index,
     required YamlMap bot,
     required YamlMap defaults,
+    required bool strictConfig,
   }) {
-    // Display name for this bot instance.
-    final name = _requiredString(bot, 'name');
-    // Provider selected for this bot.
+    final path = 'bots[$index]';
+    final botStrictConfig =
+        _optionalBool(bot, 'strict_config', path: '$path.strict_config') ??
+            _optionalBool(
+              defaults,
+              'strict_config',
+              path: 'defaults.strict_config',
+            ) ??
+            strictConfig;
+    if (botStrictConfig) {
+      _validateKnownKeys(bot, _botKeys, path: path);
+    }
+
+    final name = _requiredString(bot, 'name', path: '$path.name');
     final provider = _parseProvider(
       _optionalString(bot, 'provider') ?? _optionalString(defaults, 'provider'),
+      path: '$path.provider',
     );
-    // Telegram token used for API calls.
-    final token = _requiredString(bot, 'telegram_bot_token');
-    // Telegram user ids authorized to use the bot.
-    final allowedUsers = _requiredIntList(bot, 'allowed_user_ids');
+    final token =
+        _requiredString(bot, 'telegram_bot_token', path: '$path.telegram_bot_token');
+    final allowedUsers =
+        _requiredIntList(bot, 'allowed_user_ids', path: '$path.allowed_user_ids');
 
-    // Long-poll timeout, with bot-level config overriding defaults.
-    final pollTimeout = _optionalInt(bot, 'poll_timeout_sec') ??
-        _optionalInt(defaults, 'poll_timeout_sec') ??
+    final pollTimeout = _optionalInt(bot, 'poll_timeout_sec', path: '$path.poll_timeout_sec') ??
+        _optionalInt(
+          defaults,
+          'poll_timeout_sec',
+          path: 'defaults.poll_timeout_sec',
+        ) ??
         60;
-    // Provider execution timeout in seconds.
-    final aiCliTimeoutSec = _optionalInt(bot, 'ai_cli_timeout_sec') ??
-        _optionalInt(defaults, 'ai_cli_timeout_sec') ??
-        1000;
+    final aiCliTimeoutSec =
+        _optionalInt(bot, 'ai_cli_timeout_sec', path: '$path.ai_cli_timeout_sec') ??
+            _optionalInt(
+              defaults,
+              'ai_cli_timeout_sec',
+              path: 'defaults.ai_cli_timeout_sec',
+            ) ??
+            1000;
 
-    // Raw project path before converting to an absolute path.
     final projectPathRaw = _optionalString(bot, 'project_path') ??
         _optionalString(defaults, 'project_path');
     if (projectPathRaw == null || projectPathRaw.isEmpty) {
-      throw StateError('Missing required key: project_path');
+      throw ConfigException(
+        'Missing required key: project_path',
+        path: '$path.project_path',
+      );
     }
 
-    // Provider executable name or path.
     final aiCliCmd = _optionalString(bot, 'ai_cli_cmd') ??
         _optionalString(defaults, 'ai_cli_cmd') ??
         _defaultCommandForProvider(provider);
 
-    // Configured provider CLI arguments.
-    final aiCliArgsRaw = _asArgs(bot['ai_cli_args']) ??
-        _asArgs(defaults['ai_cli_args']) ??
+    final aiCliArgsRaw = _asArgs(bot['ai_cli_args'], path: '$path.ai_cli_args') ??
+        _asArgs(defaults['ai_cli_args'], path: 'defaults.ai_cli_args') ??
         const <String>[];
-    // Effective argument list for provider invocation.
     final aiCliArgs = aiCliArgsRaw;
-    // Optional additional system prompt for this bot.
     final additionalSystemPrompt =
         _optionalString(bot, 'additional_system_prompt') ??
             _optionalString(defaults, 'additional_system_prompt');
-    // Whether to send only the final assistant response to Telegram.
-    final finalResponseOnly = _optionalBool(bot, 'final_response_only') ??
-        _optionalBool(defaults, 'final_response_only') ??
+    final finalResponseOnly = _optionalBool(
+          bot,
+          'final_response_only',
+          path: '$path.final_response_only',
+        ) ??
+        _optionalBool(
+          defaults,
+          'final_response_only',
+          path: 'defaults.final_response_only',
+        ) ??
         false;
-    // User-defined Telegram slash commands from config.
-    final configuredTelegramCommands =
-        _asTelegramCommands(bot['telegram_commands']) ??
-            _asTelegramCommands(defaults['telegram_commands']) ??
-            const <ConfiguredTelegramCommand>[];
-    // Final Telegram command list including built-ins.
+    final botLogLevel = _parseLogLevel(
+      _optionalString(bot, 'log_level') ?? _optionalString(defaults, 'log_level'),
+      path: '$path.log_level',
+    );
+    final botLogFormat = _parseLogFormat(
+      _optionalString(bot, 'log_format') ?? _optionalString(defaults, 'log_format'),
+      path: '$path.log_format',
+    );
+    final validateProjectPath = _optionalBool(
+          bot,
+          'validate_project_path',
+          path: '$path.validate_project_path',
+        ) ??
+        _optionalBool(
+          defaults,
+          'validate_project_path',
+          path: 'defaults.validate_project_path',
+        ) ??
+        false;
+
+    final configuredTelegramCommands = _asTelegramCommands(
+          bot['telegram_commands'],
+          path: '$path.telegram_commands',
+          strictConfig: strictConfig,
+        ) ??
+        _asTelegramCommands(
+          defaults['telegram_commands'],
+          path: 'defaults.telegram_commands',
+          strictConfig: strictConfig,
+        ) ??
+        const <ConfiguredTelegramCommand>[];
     final telegramCommands = _withSystemTelegramCommands(
       configuredTelegramCommands,
     );
 
+    final projectPath = Directory(projectPathRaw).absolute.path;
+    if (validateProjectPath) {
+      final projectDir = Directory(projectPath);
+      if (!projectDir.existsSync()) {
+        throw ConfigException(
+          'project_path does not exist: $projectPath',
+          path: '$path.project_path',
+        );
+      }
+      try {
+        projectDir.listSync(followLinks: false).isNotEmpty;
+      } on FileSystemException {
+        throw ConfigException(
+          'project_path is not readable: $projectPath',
+          path: '$path.project_path',
+        );
+      }
+    }
+
     return AppConfig(
       provider: provider,
+      logLevel: botLogLevel,
+      logFormat: botLogFormat,
+      strictConfig: botStrictConfig,
+      validateProjectPath: validateProjectPath,
       name: name,
       botToken: token,
       allowedUserIds: allowedUsers,
       aiCliCmd: aiCliCmd,
       aiCliArgs: aiCliArgs,
-      projectPath: Directory(projectPathRaw).absolute.path,
+      projectPath: projectPath,
       pollTimeoutSec: pollTimeout,
       aiCliTimeout: Duration(seconds: aiCliTimeoutSec),
       additionalSystemPrompt: _normalizeOptionalPrompt(additionalSystemPrompt),
@@ -189,7 +352,7 @@ class AppConfig {
   }
 
   /// Parses a provider name, defaulting to Codex.
-  static AiProvider _parseProvider(String? raw) {
+  static AiProvider _parseProvider(String? raw, {required String path}) {
     if (raw == null || raw.trim().isEmpty) {
       return AiProvider.codex;
     }
@@ -204,8 +367,49 @@ class AppConfig {
       case 'claude':
         return AiProvider.claude;
       default:
-        throw StateError(
+        throw ConfigException(
           'Invalid provider "$raw". Use one of: codex, opencode, gemini, claude.',
+          path: path,
+        );
+    }
+  }
+
+  /// Parses log level, defaulting to info.
+  static LogLevel _parseLogLevel(String? raw, {required String path}) {
+    if (raw == null || raw.trim().isEmpty) {
+      return LogLevel.info;
+    }
+    switch (raw.trim().toLowerCase()) {
+      case 'debug':
+        return LogLevel.debug;
+      case 'info':
+        return LogLevel.info;
+      case 'warn':
+        return LogLevel.warn;
+      case 'error':
+        return LogLevel.error;
+      default:
+        throw ConfigException(
+          'Invalid log_level "$raw". Use one of: debug, info, warn, error.',
+          path: path,
+        );
+    }
+  }
+
+  /// Parses log format, defaulting to text.
+  static LogFormat _parseLogFormat(String? raw, {required String path}) {
+    if (raw == null || raw.trim().isEmpty) {
+      return LogFormat.text;
+    }
+    switch (raw.trim().toLowerCase()) {
+      case 'text':
+        return LogFormat.text;
+      case 'json':
+        return LogFormat.json;
+      default:
+        throw ConfigException(
+          'Invalid log_format "$raw". Use one of: text, json.',
+          path: path,
         );
     }
   }
@@ -234,17 +438,16 @@ class AppConfig {
   }
 
   /// Reads a required string from a YAML map.
-  static String _requiredString(YamlMap map, String key) {
+  static String _requiredString(YamlMap map, String key, {required String path}) {
     final value = _optionalString(map, key);
     if (value == null || value.isEmpty) {
-      throw StateError('Missing required key: $key');
+      throw ConfigException('Missing required key: $key', path: path);
     }
     return value;
   }
 
   /// Reads an optional string from a YAML map.
   static String? _optionalString(YamlMap map, String key) {
-    // Raw YAML value stored under [key].
     final value = map[key];
     if (value == null) {
       return null;
@@ -256,41 +459,49 @@ class AppConfig {
   }
 
   /// Reads a required integer list from a YAML map.
-  static List<int> _requiredIntList(YamlMap map, String key) {
+  static List<int> _requiredIntList(YamlMap map, String key,
+      {required String path}) {
     final value = map[key];
     if (value == null) {
-      throw StateError('Missing or invalid integer list key: $key');
+      throw ConfigException('Missing or invalid integer list key: $key',
+          path: path);
     }
     if (value is YamlList) {
       final out = <int>[];
       for (var i = 0; i < value.length; i++) {
         final parsed = _parseIntValue(value[i]);
         if (parsed == null) {
-          throw StateError('Missing or invalid integer list key: $key');
+          throw ConfigException('Missing or invalid integer list key: $key',
+              path: '$path[$i]');
         }
         out.add(parsed);
       }
       if (out.isEmpty) {
-        throw StateError('Missing or invalid integer list key: $key');
+        throw ConfigException('Missing or invalid integer list key: $key',
+            path: path);
       }
       return List<int>.unmodifiable(out);
     }
 
     final parsedSingle = _parseIntValue(value);
     if (parsedSingle == null) {
-      throw StateError('Missing or invalid integer list key: $key');
+      throw ConfigException('Missing or invalid integer list key: $key',
+          path: path);
     }
     return List<int>.unmodifiable(<int>[parsedSingle]);
   }
 
   /// Reads an optional integer from a YAML map.
-  static int? _optionalInt(YamlMap map, String key) {
-    // Raw YAML value stored under [key].
+  static int? _optionalInt(YamlMap map, String key, {required String path}) {
     final value = map[key];
     if (value == null) {
       return null;
     }
-    return _parseIntValue(value);
+    final parsed = _parseIntValue(value);
+    if (parsed == null) {
+      throw ConfigException('Expected an integer for key: $key', path: path);
+    }
+    return parsed;
   }
 
   /// Parses an integer from either an int or numeric string.
@@ -305,8 +516,7 @@ class AppConfig {
   }
 
   /// Reads an optional boolean from a YAML map.
-  static bool? _optionalBool(YamlMap map, String key) {
-    // Raw YAML value stored under [key].
+  static bool? _optionalBool(YamlMap map, String key, {required String path}) {
     final value = map[key];
     if (value == null) {
       return null;
@@ -323,27 +533,27 @@ class AppConfig {
         return false;
       }
     }
-    throw StateError('Missing or invalid boolean key: $key');
+    throw ConfigException('Missing or invalid boolean key: $key', path: path);
   }
 
   /// Converts a nullable YAML value into a [YamlMap].
-  static YamlMap _asMap(Object? value) {
+  static YamlMap _asMap(Object? value, String path) {
     if (value == null) {
       return YamlMap();
     }
     if (value is YamlMap) {
       return value;
     }
-    throw StateError('Expected a map value.');
+    throw ConfigException('Expected a map value.', path: path);
   }
 
   /// Parses provider args from either a string or a YAML list.
-  static List<String>? _asArgs(Object? value) {
+  static List<String>? _asArgs(Object? value, {required String path}) {
     if (value == null) {
       return null;
     }
     if (value is String) {
-      return _splitArgs(value);
+      return _splitArgs(value, path: path);
     }
     if (value is YamlList) {
       return value
@@ -351,50 +561,104 @@ class AppConfig {
           .where((e) => e.isNotEmpty)
           .toList(growable: false);
     }
-    throw StateError('ai_cli_args must be a string or list.');
+    throw ConfigException('ai_cli_args must be a string or list.', path: path);
   }
 
-  /// Splits a whitespace-delimited args string into a list.
-  static List<String> _splitArgs(String raw) {
+  /// Splits a shell-like argument string into a list.
+  static List<String> _splitArgs(String raw, {required String path}) {
     if (raw.trim().isEmpty) {
       return const <String>[];
     }
-    return raw
-        .split(RegExp(r'\s+'))
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList(growable: false);
+
+    final out = <String>[];
+    final token = StringBuffer();
+    var inSingle = false;
+    var inDouble = false;
+
+    for (var i = 0; i < raw.length; i++) {
+      final ch = raw[i];
+      if (ch == '\\') {
+        if (i + 1 >= raw.length) {
+          throw ConfigException('Invalid trailing escape in ai_cli_args.',
+              path: path);
+        }
+        final next = raw[i + 1];
+        if (inSingle) {
+          token.write(ch);
+        } else {
+          token.write(next);
+          i++;
+        }
+        continue;
+      }
+      if (ch == "'" && !inDouble) {
+        inSingle = !inSingle;
+        continue;
+      }
+      if (ch == '"' && !inSingle) {
+        inDouble = !inDouble;
+        continue;
+      }
+      if ((ch == ' ' || ch == '\t' || ch == '\n') && !inSingle && !inDouble) {
+        if (token.isNotEmpty) {
+          out.add(token.toString());
+          token.clear();
+        }
+        continue;
+      }
+      token.write(ch);
+    }
+
+    if (inSingle || inDouble) {
+      throw ConfigException('Unclosed quote in ai_cli_args.', path: path);
+    }
+    if (token.isNotEmpty) {
+      out.add(token.toString());
+    }
+    return out.where((entry) => entry.trim().isNotEmpty).toList(growable: false);
   }
 
   /// Parses the optional `telegram_commands` YAML list.
-  static List<ConfiguredTelegramCommand>? _asTelegramCommands(Object? value) {
+  static List<ConfiguredTelegramCommand>? _asTelegramCommands(
+    Object? value, {
+    required String path,
+    required bool strictConfig,
+  }) {
     if (value == null) {
       return null;
     }
     if (value is! YamlList) {
-      throw StateError('telegram_commands must be a list.');
+      throw ConfigException('telegram_commands must be a list.', path: path);
     }
 
-    // Parsed command definitions in declaration order.
     final commands = <ConfiguredTelegramCommand>[];
     for (var i = 0; i < value.length; i++) {
-      // Current command entry being validated.
       final entry = value[i];
       if (entry is! YamlMap) {
-        throw StateError('telegram_commands[$i] must be a map.');
+        throw ConfigException('telegram_commands[$i] must be a map.',
+            path: '$path[$i]');
       }
-      // Slash command name without the leading `/`.
-      final command = _requiredString(entry, 'command');
-      // Telegram-visible description and prompt template.
-      final description = _requiredString(entry, 'description');
-      _validateTelegramCommand(command);
+      if (strictConfig) {
+        _validateKnownKeys(
+          entry,
+          _telegramCommandKeys,
+          path: '$path[$i]',
+        );
+      }
+      final command = _requiredString(entry, 'command', path: '$path[$i].command');
+      final description =
+          _requiredString(entry, 'description', path: '$path[$i].description');
+      _validateTelegramCommand(command, path: '$path[$i].command');
       commands.add(
         ConfiguredTelegramCommand(command: command, description: description),
       );
     }
 
     if (commands.isEmpty) {
-      throw StateError('telegram_commands must not be empty when provided.');
+      throw ConfigException(
+        'telegram_commands must not be empty when provided.',
+        path: path,
+      );
     }
     return List<ConfiguredTelegramCommand>.unmodifiable(commands);
   }
@@ -403,9 +667,7 @@ class AppConfig {
   static List<ConfiguredTelegramCommand> _withSystemTelegramCommands(
     List<ConfiguredTelegramCommand> configuredCommands,
   ) {
-    // Command names already included in the merged result.
     final seen = <String>{};
-    // Final ordered list of commands.
     final merged = <ConfiguredTelegramCommand>[];
 
     for (final command in configuredCommands) {
@@ -423,13 +685,27 @@ class AppConfig {
   }
 
   /// Validates Telegram command names against Bot API constraints.
-  static void _validateTelegramCommand(String command) {
-    // Allowed Telegram command pattern.
+  static void _validateTelegramCommand(String command, {required String path}) {
     final pattern = RegExp(r'^[a-z0-9_]{1,32}$');
     if (!pattern.hasMatch(command)) {
-      throw StateError(
+      throw ConfigException(
         'Invalid telegram command "$command". Use 1-32 chars: a-z, 0-9, _.',
+        path: path,
       );
+    }
+  }
+
+  /// Verifies map keys are within [allowedKeys].
+  static void _validateKnownKeys(
+    YamlMap map,
+    Set<String> allowedKeys, {
+    required String path,
+  }) {
+    for (final key in map.keys) {
+      final name = key.toString();
+      if (!allowedKeys.contains(name)) {
+        throw ConfigException('Unknown key "$name".', path: '$path.$name');
+      }
     }
   }
 }

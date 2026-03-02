@@ -97,4 +97,18 @@ class SessionStore {
     await run.stop();
     return true;
   }
+
+  /// Cancels all active requests across chats.
+  Future<void> stopAllRuns() async {
+    final futures = <Future<void>>[];
+    for (final session in _sessions.values) {
+      final run = session.activeRun;
+      if (run != null) {
+        futures.add(run.stop());
+      }
+    }
+    if (futures.isNotEmpty) {
+      await Future.wait<void>(futures);
+    }
+  }
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:args/command_runner.dart';
@@ -39,6 +40,9 @@ Future<void> main(List<String> args) async {
   try {
     await runner.run(args);
   } on UsageException catch (e) {
+    stderr.writeln(e);
+    exitCode = 64;
+  } on ConfigException catch (e) {
     stderr.writeln(e);
     exitCode = 64;
   } catch (error, stackTrace) {
@@ -83,7 +87,36 @@ class StartCommand extends Command<void> {
         .map((config) => BridgeApp.fromConfig(config))
         .toList(growable: false);
     stdout.writeln('Starting ${apps.length} bot(s) from $configPath …');
-    await Future.wait(apps.map((app) => app.run()));
+
+    Future<void> handleShutdown(String signalName) async {
+      stdout.writeln('Received $signalName, stopping bots...');
+      await Future.wait(apps.map((app) => app.stop()));
+    }
+
+    StreamSubscription<ProcessSignal>? sigIntSub;
+    StreamSubscription<ProcessSignal>? sigTermSub;
+    try {
+      sigIntSub = ProcessSignal.sigint.watch().listen((_) {
+        unawaited(handleShutdown('SIGINT'));
+      });
+    } catch (_) {
+      // Signal is not available on this platform/runtime.
+    }
+    try {
+      sigTermSub = ProcessSignal.sigterm.watch().listen((_) {
+        unawaited(handleShutdown('SIGTERM'));
+      });
+    } catch (_) {
+      // Signal is not available on this platform/runtime.
+    }
+
+    try {
+      await Future.wait(apps.map((app) => app.run()));
+    } finally {
+      await sigIntSub?.cancel();
+      await sigTermSub?.cancel();
+      await Future.wait(apps.map((app) => app.stop()));
+    }
   }
 }
 

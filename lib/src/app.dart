@@ -4,21 +4,33 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:tgbot/src/config.dart';
+import 'package:tgbot/src/logger.dart';
 import 'package:tgbot/src/models/telegram_models.dart';
 import 'package:tgbot/src/runner/ai_cli_runner.dart';
 import 'package:tgbot/src/runner/runner_factory.dart';
 import 'package:tgbot/src/session/session_store.dart';
 import 'package:tgbot/src/telegram/telegram_client.dart';
 
-/// Coordinates Telegram polling, Codex execution, and per-chat sessions.
+/// Coordinates Telegram polling, provider execution, and per-chat sessions.
 class BridgeApp {
   /// Creates a bridge app from its runtime dependencies.
   BridgeApp({
     required this.config,
     required this.telegram,
-    required this.codex,
+    AiCliRunner? runner,
+    AiCliRunner? codex,
     required this.sessions,
-  });
+    AppLogger? logger,
+  })  : assert(runner != null || codex != null),
+        runner = runner ?? codex!,
+        logger =
+            logger ??
+            AppLogger(
+              botName: config.name,
+              provider: config.provider,
+              level: config.logLevel,
+              format: config.logFormat,
+            );
 
   /// Bot-specific configuration values.
   final AppConfig config;
@@ -27,26 +39,47 @@ class BridgeApp {
   final TelegramClient telegram;
 
   /// Provider CLI wrapper used for prompts.
-  final AiCliRunner codex;
+  final AiCliRunner runner;
+
+  /// Backwards-compatible alias for the provider runner.
+  AiCliRunner get codex => runner;
 
   /// In-memory session store keyed by Telegram chat id.
   final SessionStore sessions;
 
+  /// Runtime logger.
+  final AppLogger logger;
+
   /// Per-chat work queue for normal message handling.
   final Map<int, Future<void>> _chatWork = <int, Future<void>>{};
+
+  bool _running = false;
+  bool _disposed = false;
+  int _requestSeq = 0;
+  int _processedCount = 0;
+  int _errorCount = 0;
 
   /// Builds a fully wired app from a parsed config object.
   factory BridgeApp.fromConfig(AppConfig config) {
     return BridgeApp(
       config: config,
       telegram: TelegramClient(config.botToken),
-      codex: createRunner(config),
+      runner: createRunner(config),
       sessions: SessionStore(),
     );
   }
 
   /// Registers bot commands and starts long-polling Telegram updates.
   Future<void> run() async {
+    if (_running) {
+      return;
+    }
+    _running = true;
+    logger.info('bridge_started', fields: <String, Object?>{
+      'poll_timeout_sec': config.pollTimeoutSec,
+      'allowed_user_count': config.allowedUserIds.length,
+    });
+
     try {
       await telegram.setMyCommands(
         config.telegramCommands
@@ -59,18 +92,23 @@ class BridgeApp {
             .toList(growable: false),
       );
     } catch (error) {
-      stderr.writeln('[${config.name}] Command registration error: $error');
+      logger.warn(
+        'command_registration_failed',
+        fields: <String, Object?>{'error': error.toString()},
+      );
     }
 
-    // Next Telegram update id to request.
     var offset = 0;
-    while (true) {
+    while (_running) {
       try {
         final updates = await telegram.getUpdates(
           offset: offset,
           timeoutSec: config.pollTimeoutSec,
         );
         for (final update in updates) {
+          if (!_running) {
+            break;
+          }
           offset = update.updateId + 1;
           final message = update.message;
           if (message == null ||
@@ -78,21 +116,49 @@ class BridgeApp {
             continue;
           }
           if (_isStopCommand(message.text)) {
-            _handleMessage(message);
+            unawaited(_handleMessage(message));
             continue;
           }
           _enqueueMessage(message);
         }
       } catch (error) {
-        stderr.writeln('[${config.name}] Polling/handling error: $error');
+        if (!_running) {
+          break;
+        }
+        _errorCount++;
+        logger.error(
+          'polling_failed',
+          fields: <String, Object?>{'error': error.toString()},
+        );
         await Future<void>.delayed(const Duration(seconds: 2));
       }
     }
+
+    await _drainQueuedWork();
+    await _dispose();
+    logger.info('bridge_stopped', fields: <String, Object?>{
+      'processed_count': _processedCount,
+      'error_count': _errorCount,
+    });
+  }
+
+  /// Stops polling and in-flight runs, then closes Telegram resources.
+  Future<void> stop() async {
+    if (!_running) {
+      await _dispose();
+      return;
+    }
+    _running = false;
+    logger.info('bridge_stopping');
+    await sessions.stopAllRuns();
+    await _dispose();
   }
 
   /// Handles a single Telegram message from the allowed user.
   Future<void> _handleMessage(TelegramMessage message) async {
-    // Trimmed text used for command routing and prompting.
+    final requestId = '${message.chatId}-${++_requestSeq}';
+    final startedAt = DateTime.now();
+
     final text = message.text?.trim();
 
     if (text == null ||
@@ -104,7 +170,7 @@ class BridgeApp {
           .join('\n');
       await telegram.sendMessage(
         chatId: message.chatId,
-        text: 'Send any message to chat with Codex.\n$commandsText',
+        text: 'Send any message to chat with ${_providerLabel()}.\n$commandsText',
       );
       return;
     }
@@ -123,16 +189,14 @@ class BridgeApp {
       await telegram.sendMessage(
         chatId: message.chatId,
         text: stopped
-            ? '${config.name} stopped the active Codex run.'
-            : 'No Codex run is active for this chat.',
+            ? '${config.name} stopped the active ${_providerLabel()} run.'
+            : 'No ${_providerLabel()} run is active for this chat.',
       );
       return;
     }
 
-    // Prompt sent to Codex after optional command-template expansion.
     var prompt = text;
     for (final command in config.telegramCommands) {
-      // Telegram slash-command prefix being matched.
       final prefix = '/${command.command}';
       if (!text.startsWith(prefix)) {
         continue;
@@ -140,7 +204,6 @@ class BridgeApp {
       if (text.length > prefix.length && text[prefix.length] != ' ') {
         continue;
       }
-      // Text after the slash command, passed into the configured template.
       final commandArgs = text.length > prefix.length
           ? text.substring(prefix.length).trim()
           : '';
@@ -148,41 +211,47 @@ class BridgeApp {
       break;
     }
 
+    logger.info('request_started', fields: <String, Object?>{
+      'request_id': requestId,
+      'chat_id': message.chatId,
+      'from_user_id': message.fromUserId,
+      'prompt_length': prompt.length,
+      'final_response_only': config.finalResponseOnly,
+    });
+
     try {
-      // Session associated with the current Telegram chat.
       final session = sessions.current(message.chatId);
-      // Session version captured before this request starts.
       final sessionVersion = session.version;
-      // Cancellation handle registered for the in-flight Codex process.
       final activeRun = ActiveCodexRun();
       if (!sessions.startRun(message.chatId, activeRun)) {
         await telegram.sendMessage(
           chatId: message.chatId,
-          text: 'A Codex run is already active. Send /stop to cancel it.',
+          text:
+              'An ${_providerLabel()} run is already active. Send /stop to cancel it.',
         );
         return;
       }
-      // Canonical assistant messages already delivered for this request.
+
       final deliveredMessages = <String>{};
-      // Helper that keeps Telegram's typing indicator active.
       final typingSignal = _TypingSignal(
         telegram: telegram,
         chatId: message.chatId,
       );
+      var sentMessages = 0;
+
       Future<void> sendAssistantMessage(String assistantMessage) async {
         final normalized = _normalizeMessageForDedup(assistantMessage);
         if (normalized.isEmpty || !deliveredMessages.add(normalized)) {
           return;
         }
-        await telegram.sendMessage(
-            chatId: message.chatId, text: assistantMessage);
+        sentMessages++;
+        await telegram.sendMessage(chatId: message.chatId, text: assistantMessage);
       }
 
-      // Final structured result returned by the Codex runner.
       CodexResult result;
       try {
         await typingSignal.start();
-        result = await codex.runPrompt(
+        result = await runner.runPrompt(
           prompt: prompt,
           threadId: session.threadId,
           onCancelReady: activeRun.attachCancel,
@@ -197,22 +266,22 @@ class BridgeApp {
         await typingSignal.stop();
         sessions.finishRun(message.chatId, activeRun);
       }
-      // Thread id used to resume the same Codex conversation later.
+
       final nextThreadId = result.threadId;
       if (nextThreadId != null &&
           nextThreadId.isNotEmpty &&
           sessions.current(message.chatId).version == sessionVersion) {
         sessions.setThreadId(message.chatId, nextThreadId);
       }
-      // Messages to deliver after excluding ones already streamed.
+
       final messagesToSend = config.finalResponseOnly
           ? <String>[_resolveFinalAssistantMessage(result)]
           : (result.messages.isEmpty ? <String>[result.text] : result.messages);
-      for (final codexMessage in messagesToSend) {
-        await sendAssistantMessage(codexMessage);
+      for (final providerMessage in messagesToSend) {
+        await sendAssistantMessage(providerMessage);
       }
+
       for (final artifact in result.artifacts) {
-        // Verified local path for the file/image artifact.
         final resolved = _resolveSafePath(artifact.path);
         if (artifact.kind == 'image') {
           await telegram.sendPhoto(
@@ -228,9 +297,31 @@ class BridgeApp {
           );
         }
       }
+
+      _processedCount++;
+      logger.info('request_finished', fields: <String, Object?>{
+        'request_id': requestId,
+        'chat_id': message.chatId,
+        'duration_ms': DateTime.now().difference(startedAt).inMilliseconds,
+        'messages_sent': sentMessages,
+        'artifact_count': result.artifacts.length,
+        'thread_id_updated': nextThreadId != null && nextThreadId.isNotEmpty,
+      });
     } on CodexCancelledException {
+      logger.warn('request_cancelled', fields: <String, Object?>{
+        'request_id': requestId,
+        'chat_id': message.chatId,
+        'duration_ms': DateTime.now().difference(startedAt).inMilliseconds,
+      });
       return;
     } catch (error) {
+      _errorCount++;
+      logger.error('request_failed', fields: <String, Object?>{
+        'request_id': requestId,
+        'chat_id': message.chatId,
+        'duration_ms': DateTime.now().difference(startedAt).inMilliseconds,
+        'error': error.toString(),
+      });
       await _sendErrorMessage(chatId: message.chatId, error: error);
     }
   }
@@ -238,8 +329,7 @@ class BridgeApp {
   /// Queues [message] behind any in-flight work for the same chat.
   void _enqueueMessage(TelegramMessage message) {
     final previous = _chatWork[message.chatId] ?? Future<void>.value();
-    final next =
-        previous.catchError((_) {}).then((_) => _handleMessage(message));
+    final next = previous.catchError((_) {}).then((_) => _handleMessage(message));
     _chatWork[message.chatId] = next.whenComplete(() {
       if (identical(_chatWork[message.chatId], next)) {
         _chatWork.remove(message.chatId);
@@ -286,9 +376,9 @@ class BridgeApp {
       await telegram.sendMessage(chatId: chatId, text: primary);
       return;
     } catch (fallbackError) {
-      // Primary error delivery failed; send a generic fallback.
-      stderr.writeln(
-        '[${config.name}] Failed to send error message: $fallbackError',
+      logger.error(
+        'error_delivery_failed',
+        fields: <String, Object?>{'error': fallbackError.toString()},
       );
       await telegram.sendMessage(
         chatId: chatId,
@@ -323,15 +413,13 @@ class BridgeApp {
     return '${collapsed.substring(0, 500)}...';
   }
 
-  /// Renders a configured Telegram command into the prompt sent to Codex.
+  /// Renders a configured Telegram command into the prompt sent to the provider.
   String _buildCommandPrompt(
     ConfiguredTelegramCommand command,
     String commandArgs,
   ) {
-    // Command description reused as a prompt template.
     final template = command.description;
     if (template.contains('{args}')) {
-      // Template after substituting the command arguments placeholder.
       final rendered = template.replaceAll('{args}', commandArgs).trim();
       if (rendered.isNotEmpty) {
         return rendered;
@@ -345,9 +433,7 @@ class BridgeApp {
 
   /// Resolves an artifact path and ensures it stays inside the project root.
   String _resolveSafePath(String artifactPath) {
-    // Canonical absolute project root used for containment checks.
     final root = p.normalize(p.absolute(config.projectPath));
-    // Canonical absolute artifact path.
     final full = p.normalize(
       p.isAbsolute(artifactPath)
           ? artifactPath
@@ -358,16 +444,44 @@ class BridgeApp {
       throw StateError('Artifact path is outside project_path: $artifactPath');
     }
 
-    // Filesystem handle used to verify the artifact exists.
     final file = File(full);
     if (!file.existsSync()) {
       throw StateError('Artifact file not found: $artifactPath');
     }
     return full;
   }
+
+  String _providerLabel() {
+    switch (config.provider) {
+      case AiProvider.codex:
+        return 'Codex';
+      case AiProvider.opencode:
+        return 'OpenCode';
+      case AiProvider.gemini:
+        return 'Gemini';
+      case AiProvider.claude:
+        return 'Claude';
+    }
+  }
+
+  Future<void> _drainQueuedWork() async {
+    if (_chatWork.isEmpty) {
+      return;
+    }
+    final pending = List<Future<void>>.from(_chatWork.values);
+    await Future.wait<void>(pending.map((future) => future.catchError((_) {})));
+  }
+
+  Future<void> _dispose() async {
+    if (_disposed) {
+      return;
+    }
+    _disposed = true;
+    telegram.dispose();
+  }
 }
 
-/// Sends periodic `typing` chat actions while Codex is running.
+/// Sends periodic `typing` chat actions while a provider run is active.
 class _TypingSignal {
   /// Creates a typing-signal helper for one chat.
   _TypingSignal({required this.telegram, required this.chatId});

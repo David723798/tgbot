@@ -5,18 +5,12 @@ import 'package:tgbot/src/runner/runner_support.dart';
 class ClaudeRunner extends BaseRunner {
   /// Creates a Claude runner.
   ClaudeRunner({
-    required String command,
-    required List<String> args,
-    required String projectPath,
-    required Duration timeout,
-    String? additionalSystemPrompt,
-  }) : super(
-          command: command,
-          args: args,
-          projectPath: projectPath,
-          timeout: timeout,
-          additionalSystemPrompt: additionalSystemPrompt,
-        );
+    required super.command,
+    required super.args,
+    required super.projectPath,
+    required super.timeout,
+    super.additionalSystemPrompt,
+  });
 
   @override
   String get providerName => 'Claude';

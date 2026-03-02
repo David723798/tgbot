@@ -119,7 +119,7 @@ bots:
       expect(
         () => AppConfig.loadMany(path: '${tempDir.path}/missing.yaml'),
         throwsA(
-          isA<StateError>().having(
+          isA<ConfigException>().having(
             (error) => error.message,
             'message',
             contains('Missing config file'),
@@ -130,13 +130,13 @@ bots:
       File('${tempDir.path}/root-list.yaml').writeAsStringSync('- nope');
       expect(
         () => AppConfig.loadMany(path: '${tempDir.path}/root-list.yaml'),
-        throwsA(isA<StateError>()),
+        throwsA(isA<ConfigException>()),
       );
 
       File('${tempDir.path}/empty-bots.yaml').writeAsStringSync('bots: []');
       expect(
         () => AppConfig.loadMany(path: '${tempDir.path}/empty-bots.yaml'),
-        throwsA(isA<StateError>()),
+        throwsA(isA<ConfigException>()),
       );
 
       File('${tempDir.path}/bot-not-map.yaml').writeAsStringSync('''
@@ -145,7 +145,7 @@ bots:
 ''');
       expect(
         () => AppConfig.loadMany(path: '${tempDir.path}/bot-not-map.yaml'),
-        throwsA(isA<StateError>()),
+        throwsA(isA<ConfigException>()),
       );
 
       File('${tempDir.path}/bad-defaults.yaml').writeAsStringSync('''
@@ -158,7 +158,7 @@ bots:
 ''');
       expect(
         () => AppConfig.loadMany(path: '${tempDir.path}/bad-defaults.yaml'),
-        throwsA(isA<StateError>()),
+        throwsA(isA<ConfigException>()),
       );
 
       File('${tempDir.path}/missing-project.yaml').writeAsStringSync('''
@@ -169,7 +169,7 @@ bots:
 ''');
       expect(
         () => AppConfig.loadMany(path: '${tempDir.path}/missing-project.yaml'),
-        throwsA(isA<StateError>()),
+        throwsA(isA<ConfigException>()),
       );
 
       File('${tempDir.path}/missing-name.yaml').writeAsStringSync('''
@@ -180,7 +180,7 @@ bots:
 ''');
       expect(
         () => AppConfig.loadMany(path: '${tempDir.path}/missing-name.yaml'),
-        throwsA(isA<StateError>()),
+        throwsA(isA<ConfigException>()),
       );
     });
 
@@ -262,7 +262,9 @@ bots:
         final file = File('${tempDir.path}/case-$i.yaml')
           ..writeAsStringSync(cases[i]);
         expect(
-            () => AppConfig.loadMany(path: file.path), throwsA(isA<Object>()));
+          () => AppConfig.loadMany(path: file.path),
+          throwsA(isA<ConfigException>()),
+        );
       }
     });
 
@@ -280,6 +282,90 @@ bots:
 
       final config = AppConfig.loadMany(path: file.path).single;
       expect(config.projectPath, Directory('123').absolute.path);
+    });
+
+    test('supports shell-style quoted ai_cli_args strings', () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-config-');
+      addTearDown(() => tempDir.delete(recursive: true));
+
+      final file = File('${tempDir.path}/quoted-args.yaml')
+        ..writeAsStringSync('''
+bots:
+  - name: bot
+    telegram_bot_token: TOKEN
+    allowed_user_ids: 1
+    project_path: ${tempDir.path}
+    ai_cli_args: --model "gpt 5" --note 'hello world' --path "/tmp/a b"
+''');
+
+      final config = AppConfig.loadMany(path: file.path).single;
+      expect(
+        config.aiCliArgs,
+        <String>[
+          '--model',
+          'gpt 5',
+          '--note',
+          'hello world',
+          '--path',
+          '/tmp/a b',
+        ],
+      );
+    });
+
+    test('enforces strict_config unknown-key rejection', () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-config-');
+      addTearDown(() => tempDir.delete(recursive: true));
+
+      final file = File('${tempDir.path}/strict.yaml')
+        ..writeAsStringSync('''
+defaults:
+  strict_config: true
+bots:
+  - name: bot
+    telegram_bot_token: TOKEN
+    allowed_user_ids: 1
+    project_path: ${tempDir.path}
+    unexpected: nope
+''');
+
+      expect(
+        () => AppConfig.loadMany(path: file.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (error) => error.path,
+            'path',
+            'bots[0].unexpected',
+          ),
+        ),
+      );
+    });
+
+    test('validates project_path when validate_project_path is true', () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-config-');
+      addTearDown(() => tempDir.delete(recursive: true));
+
+      final missingPath = '${tempDir.path}/missing-project';
+      final file = File('${tempDir.path}/validate-project.yaml')
+        ..writeAsStringSync('''
+defaults:
+  validate_project_path: true
+bots:
+  - name: bot
+    telegram_bot_token: TOKEN
+    allowed_user_ids: 1
+    project_path: $missingPath
+''');
+
+      expect(
+        () => AppConfig.loadMany(path: file.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (error) => error.path,
+            'path',
+            'bots[0].project_path',
+          ),
+        ),
+      );
     });
   });
 }

@@ -1,4 +1,4 @@
-# Telegram–Codex Bridge Configuration Example
+# Telegram–AI CLI Bridge Configuration Example
 #
 # To use this, copy this file to `tgbot.yaml` and fill in your details.
 
@@ -27,6 +27,11 @@ bots:
     #   - --model
     #   - gpt-5
     # ai_cli_timeout_sec: 1000
+    # Optional runtime logging options.
+    # log_level: info            # debug, info, warn, error
+    # log_format: text           # text or json
+    # strict_config: false       # reject unknown keys when true
+    # validate_project_path: false # verify project_path exists/readable
     # The absolute path to the project you want the bot to interact with.
     # This can be overridden on a per-bot basis.
     project_path: /absolute/path/to/another/project

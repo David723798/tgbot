@@ -2,6 +2,8 @@
 
 `tgbot` is a Dart CLI that connects a Telegram bot to AI CLIs (`codex`, `opencode`, `gemini`, `claude`). It long-polls Telegram, forwards authorized messages into the configured provider CLI, keeps a per-chat thread ID in memory, and sends streamed text plus local file/image artifacts back to Telegram.
 
+Current version: `0.1.6`
+
 ## Install
 
 ```bash
@@ -175,6 +177,10 @@ bots:
 | `additional_system_prompt` | No | Extra system instructions prepended before each user request |
 | `final_response_only` | No | When `true`, suppresses streamed partial messages and sends only the final assistant response, default `false` |
 | `telegram_commands` | No | Extra Telegram slash commands registered for this bot |
+| `log_level` | No | Runtime log level: `debug`, `info`, `warn`, `error`; default `info` |
+| `log_format` | No | Runtime log format: `text` or `json`; default `text` |
+| `strict_config` | No | When `true`, unknown keys are rejected during config parsing; default `false` |
+| `validate_project_path` | No | When `true`, `project_path` must exist and be readable at startup; default `false` |
 
 Notes:
 
@@ -184,6 +190,8 @@ Notes:
 - Command names must match `^[a-z0-9_]{1,32}$`.
 - Built-in `/start`, `/new`, and `/stop` commands are always present unless you override them in `telegram_commands`.
 - `project_path` is normalized to an absolute path at startup.
+- In `strict_config: true`, unknown keys in `root`, `defaults`, `bots[*]`, and `telegram_commands[*]` fail fast.
+- `ai_cli_args` string values support shell-like quoting (single quotes, double quotes, and escapes).
 
 ## Custom Telegram Commands
 
@@ -222,10 +230,10 @@ Examples:
 - `/start` returns a short help message plus the registered command list.
 - `/new` clears the in-memory thread/session id for that Telegram chat.
 - `/stop` terminates the active provider CLI process for that Telegram chat, if one is running.
-- Some runtime status messages currently use the word "Codex" even when another provider is configured.
 - If a run is already in progress for a chat, new prompts wait in that chat's queue until the active run finishes or is stopped.
 - Any other text message is forwarded to the configured provider CLI.
 - The current thread/session id is stored per chat and reused until `/new` or process restart.
+- `tgbot start` handles `SIGINT`/`SIGTERM` and shuts down polling, active runs, and HTTP clients gracefully.
 
 Provider invocation patterns:
 
