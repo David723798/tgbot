@@ -7,6 +7,7 @@ import 'package:tgbot/src/runner/codex_runner.dart';
 import 'package:tgbot/src/config.dart';
 import 'package:tgbot/src/models/telegram_models.dart';
 import 'package:tgbot/src/runner/claude_runner.dart';
+import 'package:tgbot/src/runner/cursor_runner.dart';
 import 'package:tgbot/src/runner/gemini_runner.dart';
 import 'package:tgbot/src/runner/opencode_runner.dart';
 import 'package:tgbot/src/runtime/restart_contract.dart';
@@ -61,6 +62,22 @@ void main() {
           telegramCommands: base.telegramCommands,
         ),
       );
+      final cursorApp = BridgeApp.fromConfig(
+        AppConfig(
+          provider: AiProvider.cursor,
+          name: base.name,
+          botToken: base.botToken,
+          allowedUserIds: base.allowedUserIds,
+          aiCliCmd: 'cursor-agent',
+          aiCliArgs: base.aiCliArgs,
+          projectPath: base.projectPath,
+          pollTimeoutSec: base.pollTimeoutSec,
+          aiCliTimeout: base.aiCliTimeout,
+          additionalSystemPrompt: base.additionalSystemPrompt,
+          finalResponseOnly: base.finalResponseOnly,
+          telegramCommands: base.telegramCommands,
+        ),
+      );
       final geminiApp = BridgeApp.fromConfig(
         AppConfig(
           provider: AiProvider.gemini,
@@ -95,6 +112,7 @@ void main() {
       );
 
       expect(opencodeApp.codex, isA<OpenCodeRunner>());
+      expect(cursorApp.codex, isA<CursorRunner>());
       expect(geminiApp.codex, isA<GeminiRunner>());
       expect(claudeApp.codex, isA<ClaudeRunner>());
     });
@@ -518,7 +536,8 @@ void main() {
           expect(requesterUserId, 1);
           expect(requesterChatId, 4);
           expect(requesterBotName, 'bot');
-          return const RestartOutcome(message: 'restart ok', sendToRequester: true);
+          return const RestartOutcome(
+              message: 'restart ok', sendToRequester: true);
         },
         sessions: SessionStore(),
       );
@@ -593,8 +612,8 @@ void main() {
           required requesterBotName,
         }) async =>
             const RestartOutcome(
-              message: 'Restart denied: your user id must be allowed.',
-            ),
+          message: 'Restart denied: your user id must be allowed.',
+        ),
         sessions: SessionStore(),
       );
 
@@ -609,7 +628,8 @@ void main() {
       );
     });
 
-    test('does not crash when /restart reply send fails after restart', () async {
+    test('does not crash when /restart reply send fails after restart',
+        () async {
       final telegram = _FakeTelegramClient(
         throwOnSendMessage: true,
         updates: <List<TelegramUpdate>>[
@@ -632,9 +652,9 @@ void main() {
           required requesterBotName,
         }) async =>
             const RestartOutcome(
-              message: 'Restart completed',
-              sendToRequester: false,
-            ),
+          message: 'Restart completed',
+          sendToRequester: false,
+        ),
         sessions: SessionStore(),
       );
 

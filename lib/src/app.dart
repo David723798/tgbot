@@ -26,8 +26,7 @@ class BridgeApp implements BotApp {
     AppLogger? logger,
   })  : assert(runner != null || codex != null),
         runner = runner ?? codex!,
-        logger =
-            logger ??
+        logger = logger ??
             AppLogger(
               botName: config.name,
               provider: config.provider,
@@ -183,7 +182,8 @@ class BridgeApp implements BotApp {
           .join('\n');
       await _sendControlMessage(
         chatId: message.chatId,
-        text: 'Send any message to chat with ${_providerLabel()}.\n$commandsText',
+        text:
+            'Send any message to chat with ${_providerLabel()}.\n$commandsText',
       );
       return;
     }
@@ -227,7 +227,8 @@ class BridgeApp implements BotApp {
         requesterBotName: config.name,
       );
       if (outcome.sendToRequester) {
-        await _sendControlMessage(chatId: message.chatId, text: outcome.message);
+        await _sendControlMessage(
+            chatId: message.chatId, text: outcome.message);
       }
       return;
     }
@@ -282,7 +283,8 @@ class BridgeApp implements BotApp {
           return;
         }
         sentMessages++;
-        await telegram.sendMessage(chatId: message.chatId, text: assistantMessage);
+        await telegram.sendMessage(
+            chatId: message.chatId, text: assistantMessage);
       }
 
       CodexResult result;
@@ -366,7 +368,8 @@ class BridgeApp implements BotApp {
   /// Queues [message] behind any in-flight work for the same chat.
   void _enqueueMessage(TelegramMessage message) {
     final previous = _chatWork[message.chatId] ?? Future<void>.value();
-    final next = previous.catchError((_) {}).then((_) => _handleMessage(message));
+    final next =
+        previous.catchError((_) {}).then((_) => _handleMessage(message));
     _chatWork[message.chatId] = next.whenComplete(() {
       if (identical(_chatWork[message.chatId], next)) {
         _chatWork.remove(message.chatId);
@@ -501,6 +504,8 @@ class BridgeApp implements BotApp {
     switch (config.provider) {
       case AiProvider.codex:
         return 'Codex';
+      case AiProvider.cursor:
+        return 'Cursor';
       case AiProvider.opencode:
         return 'OpenCode';
       case AiProvider.gemini:

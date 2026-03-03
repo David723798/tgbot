@@ -1,6 +1,6 @@
 # tgbot
 
-`tgbot` is a Dart CLI that connects a Telegram bot to AI CLIs (`codex`, `opencode`, `gemini`, `claude`). It long-polls Telegram, forwards authorized messages into the configured provider CLI, keeps a per-chat thread ID in memory, and sends streamed text plus local file/image artifacts back to Telegram.
+`tgbot` is a Dart CLI that connects a Telegram bot to AI CLIs (`codex`, `cursor`, `opencode`, `gemini`, `claude`). It long-polls Telegram, forwards authorized messages into the configured provider CLI, keeps a per-chat thread ID in memory, and sends streamed text plus local file/image artifacts back to Telegram.
 
 ## Install
 
@@ -13,13 +13,14 @@ If Dart's global bin directory is not already on your `PATH`, add it first so `t
 ## Requirements
 
 - Dart SDK
-- One supported provider CLI installed and available on `PATH` (`codex`, `opencode`, `gemini`, or `claude`), unless overridden with `ai_cli_cmd`
+- One supported provider CLI installed and available on `PATH` (`codex`, `cursor-agent`, `opencode`, `gemini`, or `claude`), unless overridden with `ai_cli_cmd`
 - A Telegram bot token from `@BotFather`
 - Your Telegram numeric user ID
 
 Provider CLI references:
 
 - [OpenAI Codex CLI](https://developers.openai.com/codex/cli)
+- [Cursor Agent CLI](https://cursor.com/docs/cli/overview)
 - [OpenCode CLI](https://opencode.ai/docs/cli/)
 - [Gemini CLI](https://google-gemini.github.io/gemini-cli/docs/cli/configuration/)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/cli-reference)
@@ -169,8 +170,8 @@ bots:
 | `telegram_bot_token` | Yes | Telegram Bot API token |
 | `allowed_user_ids` | Yes | Telegram user IDs allowed to use the bot |
 | `project_path` | Yes | Absolute working directory used for the selected provider CLI; may be inherited from `defaults` |
-| `provider` | No | Provider name: `codex`, `opencode`, `gemini`, or `claude`; default `codex` |
-| `ai_cli_cmd` | No | Executable to run for the selected provider, defaults by provider (`codex`, `opencode`, `gemini`, `claude`) |
+| `provider` | No | Provider name: `codex`, `cursor`, `opencode`, `gemini`, or `claude`; default `codex` |
+| `ai_cli_cmd` | No | Executable to run for the selected provider, defaults by provider (`codex`, `cursor-agent`, `opencode`, `gemini`, `claude`) |
 | `ai_cli_args` | No | Extra args passed to the provider CLI; accepts a YAML list or whitespace-delimited string |
 | `poll_timeout_sec` | No | Telegram long-poll timeout in seconds, default `60` |
 | `ai_cli_timeout_sec` | No | Per-request provider timeout in seconds, default `1000` |
@@ -244,6 +245,7 @@ Provider invocation patterns:
 
 ```text
 codex ...args exec --skip-git-repo-check --json <prompt>
+cursor-agent ...args --print --output-format stream-json <prompt>
 opencode ...args run --format json <prompt>
 gemini ...args --prompt <prompt> --output-format json
 claude ...args --verbose --print --output-format stream-json <prompt>
@@ -253,13 +255,15 @@ Resume behavior:
 
 ```text
 codex ...args exec resume --skip-git-repo-check --json <thread_id> <prompt>
+cursor-agent ...args --print --output-format stream-json --resume <thread_id> <prompt>
 opencode ...args run --session <thread_id> --format json <prompt>
 gemini ...args --resume <thread_id> --prompt <prompt> --output-format json
 claude ...args --verbose --print --output-format stream-json --resume <thread_id> <prompt>
 ```
 
 Notes:
-- `gemini`, `opencode`, and `claude` session ids are captured from provider output when available.
+- `cursor`, `gemini`, `opencode`, and `claude` session ids are captured from provider output when available.
+- For `cursor`, `tgbot` adds `--trust` automatically unless you already pass one of `--trust`, `--yolo`, or `-f` in `ai_cli_args`.
 
 ## Streaming and Replies
 
@@ -314,6 +318,7 @@ Rules:
 - `lib/src/runner/ai_cli_runner.dart`: provider runner interface and result types
 - `lib/src/runner/runner_factory.dart`: factory that builds provider-specific runners from config
 - `lib/src/runner/codex_runner.dart`: Codex provider
+- `lib/src/runner/cursor_runner.dart`: Cursor provider
 - `lib/src/runner/claude_runner.dart`: Claude provider
 - `lib/src/runner/gemini_runner.dart`: Gemini provider
 - `lib/src/runner/opencode_runner.dart`: OpenCode provider

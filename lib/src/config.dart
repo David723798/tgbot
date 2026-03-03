@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:yaml/yaml.dart';
 
 /// Supported AI CLI providers.
-enum AiProvider { codex, opencode, gemini, claude }
+enum AiProvider { codex, cursor, opencode, gemini, claude }
 
 /// Supported runtime log levels.
 enum LogLevel { debug, info, warn, error }
@@ -397,6 +397,8 @@ class AppConfig {
     switch (normalized) {
       case 'codex':
         return AiProvider.codex;
+      case 'cursor':
+        return AiProvider.cursor;
       case 'opencode':
         return AiProvider.opencode;
       case 'gemini':
@@ -405,7 +407,7 @@ class AppConfig {
         return AiProvider.claude;
       default:
         throw ConfigException(
-          'Invalid provider "$raw". Use one of: codex, opencode, gemini, claude.',
+          'Invalid provider "$raw". Use one of: codex, cursor, opencode, gemini, claude.',
           path: path,
         );
     }
@@ -456,6 +458,8 @@ class AppConfig {
     switch (provider) {
       case AiProvider.codex:
         return 'codex';
+      case AiProvider.cursor:
+        return 'cursor-agent';
       case AiProvider.opencode:
         return 'opencode';
       case AiProvider.gemini:

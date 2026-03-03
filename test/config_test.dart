@@ -344,6 +344,25 @@ bots:
       );
     });
 
+    test('defaults ai_cli_cmd to cursor-agent for cursor provider', () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-config-');
+      addTearDown(() => tempDir.delete(recursive: true));
+
+      final file = File('${tempDir.path}/cursor-default-cmd.yaml')
+        ..writeAsStringSync('''
+bots:
+  - name: bot
+    telegram_bot_token: TOKEN
+    allowed_user_ids: 1
+    project_path: ${tempDir.path}
+    provider: cursor
+''');
+
+      final config = AppConfig.loadMany(path: file.path).single;
+      expect(config.provider, AiProvider.cursor);
+      expect(config.aiCliCmd, 'cursor-agent');
+    });
+
     test('enforces strict_config unknown-key rejection', () async {
       final tempDir = await Directory.systemTemp.createTemp('tgbot-config-');
       addTearDown(() => tempDir.delete(recursive: true));

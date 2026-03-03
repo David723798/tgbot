@@ -1,6 +1,7 @@
 import 'package:tgbot/src/runner/codex_runner.dart';
 import 'package:tgbot/src/config.dart';
 import 'package:tgbot/src/runner/claude_runner.dart';
+import 'package:tgbot/src/runner/cursor_runner.dart';
 import 'package:tgbot/src/runner/gemini_runner.dart';
 import 'package:tgbot/src/runner/opencode_runner.dart';
 
@@ -9,6 +10,16 @@ AiCliRunner createRunner(AppConfig config) {
   switch (config.provider) {
     case AiProvider.codex:
       return CodexRunner(
+        command: config.aiCliCmd,
+        args: config.aiCliArgs,
+        projectPath: config.projectPath,
+        timeout: config.aiCliTimeout,
+        additionalSystemPrompt: config.additionalSystemPrompt,
+        memory: config.memory,
+        memoryFilename: config.memoryFilename,
+      );
+    case AiProvider.cursor:
+      return CursorRunner(
         command: config.aiCliCmd,
         args: config.aiCliArgs,
         projectPath: config.projectPath,
