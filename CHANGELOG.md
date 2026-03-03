@@ -1,3 +1,7 @@
+## 0.2.1
+
+- Fix Windows startup crash by skipping unsupported `SIGTERM` signal registration on Windows while keeping `SIGINT` (`Ctrl+C`) graceful shutdown behavior.
+
 ## 0.2.0
 
 - Add Cursor provider support (`provider: cursor`) with default command `cursor-agent`.

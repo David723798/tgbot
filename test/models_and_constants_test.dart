@@ -42,6 +42,6 @@ void main() {
   test('default config template and version are exposed', () {
     expect(defaultConfigTemplate, contains('telegram_bot_token'));
     expect(defaultConfigTemplate, contains('allowed_user_ids'));
-    expect(version, '0.2.0');
+    expect(version, '0.2.1');
   });
 }

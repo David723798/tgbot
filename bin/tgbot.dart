@@ -98,12 +98,14 @@ class StartCommand extends Command<void> {
     } catch (_) {
       // Signal is not available on this platform/runtime.
     }
-    try {
-      sigTermSub = ProcessSignal.sigterm.watch().listen((_) {
-        unawaited(handleShutdown('SIGTERM'));
-      });
-    } catch (_) {
-      // Signal is not available on this platform/runtime.
+    if (!Platform.isWindows) {
+      try {
+        sigTermSub = ProcessSignal.sigterm.watch().listen((_) {
+          unawaited(handleShutdown('SIGTERM'));
+        });
+      } catch (_) {
+        // Signal is not available on this platform/runtime.
+      }
     }
 
     try {
