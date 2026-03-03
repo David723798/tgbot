@@ -61,7 +61,7 @@ String normalizePromptForProcessArg(
   // For Windows process args, escape double quotes and normalize newlines.
   // Replace newlines with literal \n (double escaping for cmd.exe safe).
   return prompt
-      .replaceAll(r'"', r'\"') // Escape double quotes
+      .replaceAll(r'"', "'") // Escape double quotes
       .replaceAll('\r\n', '\n') // Normalize CRLF to LF
       .replaceAll('\n', r'\n'); // Replace each newline with \n for process arg
 }
@@ -72,69 +72,15 @@ Future<Process> startProcess({
   required List<String> processArgs,
   required String workingDirectory,
 }) async {
-  try {
-    final process = await Process.start(
-      command,
-      processArgs,
-      workingDirectory: workingDirectory,
-      runInShell: false,
-    );
-    process.stdin.close();
-    return process;
-    // coverage:ignore-start
-  } on ProcessException catch (error) {
-    if (!_isFileNotFound(error) || !Platform.isWindows) {
-      rethrow;
-    }
-
-    final lower = command.toLowerCase();
-    final hasExecutableExtension = lower.endsWith('.exe') ||
-        lower.endsWith('.cmd') ||
-        lower.endsWith('.bat');
-
-    if (!hasExecutableExtension) {
-      for (final suffix in const <String>['.cmd', '.exe', '.bat']) {
-        final needsShell = suffix == '.cmd' || suffix == '.bat';
-        try {
-          final process = await Process.start(
-            '$command$suffix',
-            processArgs,
-            workingDirectory: workingDirectory,
-            runInShell: needsShell,
-          );
-          unawaited(process.stdin.close());
-          return process;
-        } on ProcessException catch (_) {
-          // Suffix not found; try the next extension in the fallback chain.
-          continue;
-        }
-      }
-    }
-
-    final process = await Process.start(
-      command,
-      processArgs,
-      workingDirectory: workingDirectory,
-      runInShell: true,
-    );
-    unawaited(process.stdin.close());
-    return process;
-    // coverage:ignore-end
-  }
+  final process = await Process.start(
+    command,
+    processArgs,
+    workingDirectory: workingDirectory,
+    runInShell: Platform.isWindows,
+  );
+  process.stdin.close();
+  return process;
 }
-
-/// Returns `true` when process failure indicates a missing executable.
-// coverage:ignore-start
-bool _isFileNotFound(ProcessException error) {
-  final code = error.errorCode;
-  if (code == 2) {
-    return true;
-  }
-  final message = error.message.toLowerCase();
-  return message.contains('cannot find the file') ||
-      message.contains('no such file or directory');
-}
-// coverage:ignore-end
 
 /// Parsed assistant output after cleanup and artifact extraction.
 class ParsedAssistantOutput {

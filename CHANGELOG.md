@@ -1,3 +1,7 @@
+## 0.2.3
+
+- Fix Windows prompt argument normalization.
+
 ## 0.2.2
 
 - Fix Windows prompt argument normalization by escaping double quotes in addition to CRLF/newline normalization.
