@@ -1,3 +1,7 @@
+## 0.2.2
+
+- Fix Windows prompt argument normalization by escaping double quotes in addition to CRLF/newline normalization.
+
 ## 0.2.1
 
 - Fix Windows startup crash by skipping unsupported `SIGTERM` signal registration on Windows while keeping `SIGINT` (`Ctrl+C`) graceful shutdown behavior.

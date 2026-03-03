@@ -58,7 +58,12 @@ String normalizePromptForProcessArg(
   if (!shouldNormalize) {
     return prompt;
   }
-  return prompt.replaceAll('\r\n', '\n').replaceAll('\n', r'\n');
+  // For Windows process args, escape double quotes and normalize newlines.
+  // Replace newlines with literal \n (double escaping for cmd.exe safe).
+  return prompt
+      .replaceAll(r'"', r'\"') // Escape double quotes
+      .replaceAll('\r\n', '\n') // Normalize CRLF to LF
+      .replaceAll('\n', r'\n'); // Replace each newline with \n for process arg
 }
 
 /// Starts a process, including Windows executable fallbacks.

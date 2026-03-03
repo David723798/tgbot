@@ -1,5 +1,5 @@
 name: tgbot
-version: 0.2.1
+version: 0.2.2
 description: A CLI tool that bridges Telegram messages to AI CLIs (Codex, Cursor Agent, OpenCode, Gemini, Claude), allowing you to interact with AI agents through a Telegram bot.
 homepage: https://pub.dev/packages/tgbot
 repository: https://github.com/David723798/tgbot
