@@ -89,6 +89,7 @@ class BridgeApp implements BotApp {
     logger.info('bridge_started', fields: <String, Object?>{
       'poll_timeout_sec': config.pollTimeoutSec,
       'allowed_user_count': config.allowedUserIds.length,
+      'allowed_chat_count': config.allowedChatIds.length,
     });
 
     try {
@@ -122,8 +123,7 @@ class BridgeApp implements BotApp {
           }
           offset = update.updateId + 1;
           final message = update.message;
-          if (message == null ||
-              !config.allowedUserIds.contains(message.fromUserId)) {
+          if (message == null || !_isAuthorizedMessage(message)) {
             continue;
           }
           if (_isStopCommand(message.text) || _isRestartCommand(message.text)) {
@@ -363,6 +363,12 @@ class BridgeApp implements BotApp {
       });
       await _sendErrorMessage(chatId: message.chatId, error: error);
     }
+  }
+
+  /// Returns true when a message sender or target chat is authorized.
+  bool _isAuthorizedMessage(TelegramMessage message) {
+    return config.allowedUserIds.contains(message.fromUserId) ||
+        config.allowedChatIds.contains(message.chatId);
   }
 
   /// Queues [message] behind any in-flight work for the same chat.

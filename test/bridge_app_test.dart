@@ -164,6 +164,42 @@ void main() {
       expect(sessions.current(10).version, 2);
     });
 
+    test('accepts messages from allowed chat ids', () async {
+      final telegram = _FakeTelegramClient(
+        updates: <List<TelegramUpdate>>[
+          <TelegramUpdate>[
+            TelegramUpdate(
+              updateId: 1,
+              message: TelegramMessage(
+                chatId: -1001234567890,
+                fromUserId: 999999,
+                text: 'chat-allowed',
+              ),
+            ),
+          ],
+        ],
+      );
+      final codex = _FakeCodexRunner(
+        projectPath: Directory.current.path,
+        result: CodexResult(text: 'ok', messages: const <String>[]),
+      );
+      final app = BridgeApp(
+        config: _config(
+          Directory.current.path,
+          allowedUserIds: const <int>[],
+          allowedChatIds: const <int>[-1001234567890],
+        ),
+        telegram: telegram,
+        codex: codex,
+        sessions: SessionStore(),
+      );
+
+      await _runUntilIdle(app);
+
+      expect(codex.prompts, <String>['chat-allowed']);
+      expect(telegram.sentMessages.single.text, 'ok');
+    });
+
     test('runs codex, skips duplicate streamed output, and sends artifacts',
         () async {
       final tempDir = await Directory.systemTemp.createTemp('tgbot-app-');
@@ -813,6 +849,8 @@ Future<void> _runUntilIdle(
 AppConfig _config(
   String projectPath, {
   bool finalResponseOnly = false,
+  List<int> allowedUserIds = const <int>[1],
+  List<int> allowedChatIds = const <int>[],
   List<ConfiguredTelegramCommand> telegramCommands =
       const <ConfiguredTelegramCommand>[
     ConfiguredTelegramCommand(command: 'start', description: 'Show usage help'),
@@ -830,7 +868,8 @@ AppConfig _config(
     name: 'bot',
     botToken: 'TOKEN',
     logLevel: LogLevel.error,
-    allowedUserIds: const <int>[1],
+    allowedUserIds: allowedUserIds,
+    allowedChatIds: allowedChatIds,
     aiCliCmd: 'codex',
     aiCliArgs: const <String>[],
     projectPath: projectPath,

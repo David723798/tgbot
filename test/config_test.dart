@@ -23,6 +23,8 @@ defaults:
   memory: true
   memory_filename: TEAM_MEMORY.md
   final_response_only: true
+  allowed_chat_ids:
+    - -1001234567890
   telegram_commands:
     - command: fix
       description: "Fix this: {args}"
@@ -43,6 +45,7 @@ bots:
       expect(config.provider, AiProvider.codex);
       expect(config.botToken, 'TOKEN');
       expect(config.allowedUserIds, const <int>[42]);
+      expect(config.allowedChatIds, const <int>[-1001234567890]);
       expect(config.aiCliCmd, 'codex-bin');
       expect(
           config.projectPath, Directory(inheritedProject.path).absolute.path);
@@ -197,7 +200,6 @@ bots:
 bots:
   - name: bot
     telegram_bot_token: TOKEN
-    allowed_user_ids: 1
 ''');
       expect(
         () => AppConfig.loadMany(path: '${tempDir.path}/missing-project.yaml'),
@@ -214,6 +216,24 @@ bots:
         () => AppConfig.loadMany(path: '${tempDir.path}/missing-name.yaml'),
         throwsA(isA<ConfigException>()),
       );
+    });
+
+    test('accepts chat-only authorization using allowed_chat_ids', () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-config-');
+      addTearDown(() => tempDir.delete(recursive: true));
+
+      final file = File('${tempDir.path}/chat-only.yaml')..writeAsStringSync('''
+bots:
+  - name: bot
+    telegram_bot_token: TOKEN
+    allowed_chat_ids:
+      - -1009876543210
+    project_path: ${tempDir.path}
+''');
+
+      final config = AppConfig.loadMany(path: file.path).single;
+      expect(config.allowedUserIds, isEmpty);
+      expect(config.allowedChatIds, const <int>[-1009876543210]);
     });
 
     test('throws for invalid typed fields and telegram command entries',

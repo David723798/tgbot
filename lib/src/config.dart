@@ -39,6 +39,7 @@ class AppConfig {
     required this.name,
     required this.botToken,
     required this.allowedUserIds,
+    this.allowedChatIds = const <int>[],
     required this.aiCliCmd,
     required this.aiCliArgs,
     required this.projectPath,
@@ -74,6 +75,9 @@ class AppConfig {
 
   /// Telegram user ids allowed to talk to the bot.
   final List<int> allowedUserIds;
+
+  /// Telegram chat ids allowed to talk to the bot (for groups/channels).
+  final List<int> allowedChatIds;
 
   /// Executable used to launch the selected provider CLI.
   final String aiCliCmd;
@@ -143,11 +147,13 @@ class AppConfig {
     'log_format',
     'strict_config',
     'validate_project_path',
+    'allowed_chat_ids',
   };
   static const Set<String> _botKeys = <String>{
     'name',
     'telegram_bot_token',
     'allowed_user_ids',
+    'allowed_chat_ids',
     'provider',
     'project_path',
     'ai_cli_cmd',
@@ -243,8 +249,26 @@ class AppConfig {
     );
     final token = _requiredString(bot, 'telegram_bot_token',
         path: '$path.telegram_bot_token');
-    final allowedUsers = _requiredIntList(bot, 'allowed_user_ids',
-        path: '$path.allowed_user_ids');
+    final allowedUsers = _optionalIntList(bot, 'allowed_user_ids',
+            path: '$path.allowed_user_ids') ??
+        const <int>[];
+    final allowedChats = _optionalIntList(
+          bot,
+          'allowed_chat_ids',
+          path: '$path.allowed_chat_ids',
+        ) ??
+        _optionalIntList(
+          defaults,
+          'allowed_chat_ids',
+          path: 'defaults.allowed_chat_ids',
+        ) ??
+        const <int>[];
+    if (allowedUsers.isEmpty && allowedChats.isEmpty) {
+      throw ConfigException(
+        'At least one of allowed_user_ids or allowed_chat_ids is required.',
+        path: path,
+      );
+    }
 
     final pollTimeout =
         _optionalInt(bot, 'poll_timeout_sec', path: '$path.poll_timeout_sec') ??
@@ -375,6 +399,7 @@ class AppConfig {
       name: name,
       botToken: token,
       allowedUserIds: allowedUsers,
+      allowedChatIds: allowedChats,
       aiCliCmd: aiCliCmd,
       aiCliArgs: aiCliArgs,
       projectPath: projectPath,
@@ -540,6 +565,15 @@ class AppConfig {
           path: path);
     }
     return List<int>.unmodifiable(<int>[parsedSingle]);
+  }
+
+  /// Reads an optional integer list from a YAML map.
+  static List<int>? _optionalIntList(YamlMap map, String key,
+      {required String path}) {
+    if (!map.containsKey(key) || map[key] == null) {
+      return null;
+    }
+    return _requiredIntList(map, key, path: path);
   }
 
   /// Reads an optional integer from a YAML map.

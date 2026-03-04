@@ -1,3 +1,9 @@
+## 0.2.4
+
+- Add `allowed_chat_ids` config support so bots can authorize and respond in Telegram groups/supergroups by chat ID.
+- Allow message processing when either sender is in `allowed_user_ids` or chat is in `allowed_chat_ids`.
+- Update config templates/README with group chat ID setup guidance.
+
 ## 0.2.3
 
 - Fix Windows prompt argument normalization.

@@ -110,7 +110,13 @@ tgbot upgrade
 2. Send it any message.
 3. Copy the numeric ID into `allowed_user_ids`.
 
-Only that user can interact with the configured bot.
+### Group ID (optional)
+
+1. Add your bot to a group/supergroup.
+2. Send any message in that chat.
+3. Use `getUpdates` and copy `message.chat.id` into `allowed_chat_ids` (usually a negative number like `-1001234567890`).
+
+Messages are accepted when either the sender is in `allowed_user_ids` or the chat is in `allowed_chat_ids`.
 
 ## Configuration
 
@@ -129,6 +135,9 @@ bots:
     telegram_bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
     allowed_user_ids:
       - 123456789
+    # Optional:
+    # allowed_chat_ids:
+    #   - -1001234567890
     project_path: /absolute/path/to/project
 ```
 
@@ -168,7 +177,8 @@ bots:
 |---|---|---|
 | `name` | Yes | Used in logs and status messages |
 | `telegram_bot_token` | Yes | Telegram Bot API token |
-| `allowed_user_ids` | Yes | Telegram user IDs allowed to use the bot |
+| `allowed_user_ids` | No* | Telegram user IDs allowed to use the bot |
+| `allowed_chat_ids` | No* | Telegram chat IDs allowed to use the bot (groups/supergroups/channels) |
 | `project_path` | Yes | Absolute working directory used for the selected provider CLI; may be inherited from `defaults` |
 | `provider` | No | Provider name: `codex`, `cursor`, `opencode`, `gemini`, or `claude`; default `codex` |
 | `ai_cli_cmd` | No | Executable to run for the selected provider, defaults by provider (`codex`, `cursor-agent`, `opencode`, `gemini`, `claude`) |
@@ -189,6 +199,7 @@ Notes:
 
 - `defaults` applies only when a bot omits that key.
 - Every bot must end up with an effective `project_path`.
+- At least one of `allowed_user_ids` or `allowed_chat_ids` is required.
 - `telegram_commands` must be a non-empty list when provided.
 - Command names must match `^[a-z0-9_]{1,32}$`.
 - Built-in `/start`, `/new`, `/stop`, and `/restart` commands are always present unless you override them in `telegram_commands`.
@@ -228,7 +239,7 @@ Examples:
 ## Runtime Behavior
 
 - One polling loop runs per configured bot.
-- Only messages from IDs in `allowed_user_ids` are processed.
+- Messages are processed only when sender user ID is in `allowed_user_ids` or chat ID is in `allowed_chat_ids`.
 - Messages are processed serially per chat so responses stay ordered.
 - `/start` returns a short help message plus the registered command list.
 - `/new` clears the in-memory thread/session id for that Telegram chat.
