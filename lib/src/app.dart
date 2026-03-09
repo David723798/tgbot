@@ -12,6 +12,7 @@ import 'package:tgbot/src/runner/ai_cli_runner.dart';
 import 'package:tgbot/src/runner/runner_factory.dart';
 import 'package:tgbot/src/session/session_store.dart';
 import 'package:tgbot/src/telegram/telegram_client.dart';
+import 'package:tgbot/src/topic/topic_registry.dart';
 
 /// Coordinates Telegram polling, provider execution, and per-chat sessions.
 class BridgeApp implements BotApp {
@@ -21,11 +22,16 @@ class BridgeApp implements BotApp {
     required this.telegram,
     AiCliRunner? runner,
     AiCliRunner? codex,
+    AiCliRunner Function(AppConfig config, String projectPath)? runnerFactory,
+    TopicRegistry? topicRegistry,
     this.onRestartRequested,
     required this.sessions,
     AppLogger? logger,
-  })  : assert(runner != null || codex != null),
-        runner = runner ?? codex!,
+  })  : runner = runner ?? codex,
+        runnerFactory = runnerFactory ??
+            ((config, projectPath) =>
+                createRunnerForProjectPath(config, projectPath)),
+        topicRegistry = topicRegistry ?? TopicRegistry(),
         logger = logger ??
             AppLogger(
               botName: config.name,
@@ -42,10 +48,17 @@ class BridgeApp implements BotApp {
   final TelegramClient telegram;
 
   /// Provider CLI wrapper used for prompts.
-  final AiCliRunner runner;
+  final AiCliRunner? runner;
+
+  /// Builds a provider runner for a specific project path.
+  final AiCliRunner Function(AppConfig config, String projectPath)
+      runnerFactory;
+
+  /// Persistent mapping for created forum topic ids.
+  final TopicRegistry topicRegistry;
 
   /// Backwards-compatible alias for the provider runner.
-  AiCliRunner get codex => runner;
+  AiCliRunner? get codex => runner;
 
   /// In-memory session store keyed by Telegram chat id.
   final SessionStore sessions;
@@ -57,7 +70,10 @@ class BridgeApp implements BotApp {
   final RestartRequestHandler? onRestartRequested;
 
   /// Per-chat work queue for normal message handling.
-  final Map<int, Future<void>> _chatWork = <int, Future<void>>{};
+  final Map<SessionScope, Future<void>> _chatWork =
+      <SessionScope, Future<void>>{};
+  final Map<SessionScope, ConfiguredTelegramTopic> _resolvedTopics =
+      <SessionScope, ConfiguredTelegramTopic>{};
 
   bool _running = false;
   bool _disposed = false;
@@ -73,7 +89,7 @@ class BridgeApp implements BotApp {
     return BridgeApp(
       config: config,
       telegram: TelegramClient(config.botToken),
-      runner: createRunner(config),
+      runner: config.projectPath == null ? null : createRunner(config),
       onRestartRequested: onRestartRequested,
       sessions: SessionStore(),
     );
@@ -93,8 +109,9 @@ class BridgeApp implements BotApp {
     });
 
     try {
+      await _initializeConfiguredTopics();
       await telegram.setMyCommands(
-        config.telegramCommands
+        _allTelegramCommands()
             .map(
               (command) => TelegramBotCommand(
                 command: command.command,
@@ -170,6 +187,11 @@ class BridgeApp implements BotApp {
   Future<void> _handleMessage(TelegramMessage message) async {
     final requestId = '${message.chatId}-${++_requestSeq}';
     final startedAt = DateTime.now();
+    final topicId = message.messageThreadId;
+    final topicConfig =
+        _resolvedTopics[sessions.scope(message.chatId, topicId: topicId)];
+    final effectiveConfig = _effectiveConfigForTopic(topicConfig);
+    final projectPath = effectiveConfig.projectPath;
 
     final text = message.text?.trim();
 
@@ -177,33 +199,36 @@ class BridgeApp implements BotApp {
         text.isEmpty ||
         text == '/start' ||
         text.startsWith('/start ')) {
-      final commandsText = config.telegramCommands
+      final commandsText = effectiveConfig.telegramCommands
           .map((command) => '/${command.command} - ${command.description}')
           .join('\n');
       await _sendControlMessage(
         chatId: message.chatId,
+        messageThreadId: topicId,
         text:
-            'Send any message to chat with ${_providerLabel()}.\n$commandsText',
+            'Send any message to chat with ${_providerLabel(effectiveConfig.provider)}.\n$commandsText',
       );
       return;
     }
 
     if (text == '/new' || text.startsWith('/new ')) {
-      sessions.reset(message.chatId);
+      sessions.reset(message.chatId, topicId: topicId);
       await _sendControlMessage(
         chatId: message.chatId,
+        messageThreadId: topicId,
         text: '${config.name} has started a new session.',
       );
       return;
     }
 
     if (_isStopCommand(text)) {
-      final stopped = await sessions.stopRun(message.chatId);
+      final stopped = await sessions.stopRun(message.chatId, topicId: topicId);
       await _sendControlMessage(
         chatId: message.chatId,
+        messageThreadId: topicId,
         text: stopped
-            ? '${config.name} stopped the active ${_providerLabel()} run.'
-            : 'No ${_providerLabel()} run is active for this chat.',
+            ? '${config.name} stopped the active ${_providerLabel(effectiveConfig.provider)} run.'
+            : 'No ${_providerLabel(effectiveConfig.provider)} run is active for this chat.',
       );
       return;
     }
@@ -213,12 +238,14 @@ class BridgeApp implements BotApp {
       if (handler == null) {
         await _sendControlMessage(
           chatId: message.chatId,
+          messageThreadId: topicId,
           text: 'Restart is not enabled for this bot runtime.',
         );
         return;
       }
       await _sendControlMessage(
         chatId: message.chatId,
+        messageThreadId: topicId,
         text: 'Restart requested. Reloading config and restarting all bots...',
       );
       final outcome = await handler(
@@ -234,7 +261,7 @@ class BridgeApp implements BotApp {
     }
 
     var prompt = text;
-    for (final command in config.telegramCommands) {
+    for (final command in effectiveConfig.telegramCommands) {
       final prefix = '/${command.command}';
       if (!text.startsWith(prefix)) {
         continue;
@@ -252,20 +279,37 @@ class BridgeApp implements BotApp {
     logger.info('request_started', fields: <String, Object?>{
       'request_id': requestId,
       'chat_id': message.chatId,
+      'topic_id': topicId,
       'from_user_id': message.fromUserId,
       'prompt_length': prompt.length,
-      'final_response_only': config.finalResponseOnly,
+      'final_response_only': effectiveConfig.finalResponseOnly,
+      'project_path': projectPath,
     });
 
     try {
-      final session = sessions.current(message.chatId);
+      if (projectPath == null) {
+        await _sendControlMessage(
+          chatId: message.chatId,
+          messageThreadId: topicId,
+          text:
+              'No project is configured for this chat/topic. Add a matching topic entry or set bot-level project_path.',
+        );
+        return;
+      }
+      final activeRunner = projectPath == config.projectPath &&
+              runner != null &&
+              identical(effectiveConfig, config)
+          ? runner!
+          : runnerFactory(effectiveConfig, projectPath);
+      final session = sessions.current(message.chatId, topicId: topicId);
       final sessionVersion = session.version;
       final activeRun = ActiveCodexRun();
-      if (!sessions.startRun(message.chatId, activeRun)) {
+      if (!sessions.startRun(message.chatId, activeRun, topicId: topicId)) {
         await telegram.sendMessage(
           chatId: message.chatId,
+          messageThreadId: topicId,
           text:
-              'An ${_providerLabel()} run is already active. Send /stop to cancel it.',
+              'An ${_providerLabel(effectiveConfig.provider)} run is already active. Send /stop to cancel it.',
         );
         return;
       }
@@ -274,6 +318,7 @@ class BridgeApp implements BotApp {
       final typingSignal = _TypingSignal(
         telegram: telegram,
         chatId: message.chatId,
+        messageThreadId: topicId,
       );
       var sentMessages = 0;
 
@@ -284,17 +329,20 @@ class BridgeApp implements BotApp {
         }
         sentMessages++;
         await telegram.sendMessage(
-            chatId: message.chatId, text: assistantMessage);
+          chatId: message.chatId,
+          messageThreadId: topicId,
+          text: assistantMessage,
+        );
       }
 
       CodexResult result;
       try {
         await typingSignal.start();
-        result = await runner.runPrompt(
+        result = await activeRunner.runPrompt(
           prompt: prompt,
           threadId: session.threadId,
           onCancelReady: activeRun.attachCancel,
-          onAssistantMessage: config.finalResponseOnly
+          onAssistantMessage: effectiveConfig.finalResponseOnly
               ? null
               : (assistantMessage) async {
                   await typingSignal.stop();
@@ -303,17 +351,22 @@ class BridgeApp implements BotApp {
         );
       } finally {
         await typingSignal.stop();
-        sessions.finishRun(message.chatId, activeRun);
+        sessions.finishRun(message.chatId, activeRun, topicId: topicId);
       }
 
       final nextThreadId = result.threadId;
       if (nextThreadId != null &&
           nextThreadId.isNotEmpty &&
-          sessions.current(message.chatId).version == sessionVersion) {
-        sessions.setThreadId(message.chatId, nextThreadId);
+          sessions.current(message.chatId, topicId: topicId).version ==
+              sessionVersion) {
+        sessions.setThreadId(
+          message.chatId,
+          nextThreadId,
+          topicId: topicId,
+        );
       }
 
-      final messagesToSend = config.finalResponseOnly
+      final messagesToSend = effectiveConfig.finalResponseOnly
           ? <String>[_resolveFinalAssistantMessage(result)]
           : (result.messages.isEmpty ? <String>[result.text] : result.messages);
       for (final providerMessage in messagesToSend) {
@@ -321,16 +374,19 @@ class BridgeApp implements BotApp {
       }
 
       for (final artifact in result.artifacts) {
-        final resolved = _resolveSafePath(artifact.path);
+        final resolved =
+            _resolveSafePath(artifact.path, projectPath: projectPath);
         if (artifact.kind == 'image') {
           await telegram.sendPhoto(
             chatId: message.chatId,
+            messageThreadId: topicId,
             filePath: resolved,
             caption: artifact.caption,
           );
         } else {
           await telegram.sendDocument(
             chatId: message.chatId,
+            messageThreadId: topicId,
             filePath: resolved,
             caption: artifact.caption,
           );
@@ -341,6 +397,7 @@ class BridgeApp implements BotApp {
       logger.info('request_finished', fields: <String, Object?>{
         'request_id': requestId,
         'chat_id': message.chatId,
+        'topic_id': topicId,
         'duration_ms': DateTime.now().difference(startedAt).inMilliseconds,
         'messages_sent': sentMessages,
         'artifact_count': result.artifacts.length,
@@ -350,6 +407,7 @@ class BridgeApp implements BotApp {
       logger.warn('request_cancelled', fields: <String, Object?>{
         'request_id': requestId,
         'chat_id': message.chatId,
+        'topic_id': topicId,
         'duration_ms': DateTime.now().difference(startedAt).inMilliseconds,
       });
       return;
@@ -358,10 +416,15 @@ class BridgeApp implements BotApp {
       logger.error('request_failed', fields: <String, Object?>{
         'request_id': requestId,
         'chat_id': message.chatId,
+        'topic_id': topicId,
         'duration_ms': DateTime.now().difference(startedAt).inMilliseconds,
         'error': error.toString(),
       });
-      await _sendErrorMessage(chatId: message.chatId, error: error);
+      await _sendErrorMessage(
+        chatId: message.chatId,
+        messageThreadId: topicId,
+        error: error,
+      );
     }
   }
 
@@ -373,12 +436,14 @@ class BridgeApp implements BotApp {
 
   /// Queues [message] behind any in-flight work for the same chat.
   void _enqueueMessage(TelegramMessage message) {
-    final previous = _chatWork[message.chatId] ?? Future<void>.value();
+    final scope =
+        sessions.scope(message.chatId, topicId: message.messageThreadId);
+    final previous = _chatWork[scope] ?? Future<void>.value();
     final next =
         previous.catchError((_) {}).then((_) => _handleMessage(message));
-    _chatWork[message.chatId] = next.whenComplete(() {
-      if (identical(_chatWork[message.chatId], next)) {
-        _chatWork.remove(message.chatId);
+    _chatWork[scope] = next.whenComplete(() {
+      if (identical(_chatWork[scope], next)) {
+        _chatWork.remove(scope);
       }
     });
   }
@@ -424,11 +489,16 @@ class BridgeApp implements BotApp {
   /// Sends a concise error reply and falls back to a generic message on failure.
   Future<void> _sendErrorMessage({
     required int chatId,
+    int? messageThreadId,
     required Object error,
   }) async {
     final primary = _formatErrorForUser(error);
     try {
-      await telegram.sendMessage(chatId: chatId, text: primary);
+      await telegram.sendMessage(
+        chatId: chatId,
+        messageThreadId: messageThreadId,
+        text: primary,
+      );
       return;
     } catch (fallbackError) {
       logger.error(
@@ -437,6 +507,7 @@ class BridgeApp implements BotApp {
       );
       await telegram.sendMessage(
         chatId: chatId,
+        messageThreadId: messageThreadId,
         text: 'Error: provider command failed. Check logs for details.',
       );
     }
@@ -486,13 +557,93 @@ class BridgeApp implements BotApp {
     return '$template\n\n$commandArgs';
   }
 
+  Future<void> _initializeConfiguredTopics() async {
+    for (final topic in config.topics) {
+      final storedId = topicRegistry.lookup(
+        botName: config.name,
+        chatId: topic.chatId,
+        topicName: topic.name,
+      );
+      final topicId = storedId ??
+          (await telegram.createForumTopic(
+                  chatId: topic.chatId, name: topic.name))
+              .messageThreadId;
+      if (storedId == null) {
+        await topicRegistry.store(
+          botName: config.name,
+          chatId: topic.chatId,
+          topicName: topic.name,
+          topicId: topicId,
+        );
+        logger.info('topic_created', fields: <String, Object?>{
+          'chat_id': topic.chatId,
+          'topic_id': topicId,
+          'topic_name': topic.name,
+          'project_path': topic.projectPath,
+        });
+      }
+      _resolvedTopics[sessions.scope(topic.chatId, topicId: topicId)] = topic;
+    }
+  }
+
+  List<ConfiguredTelegramCommand> _allTelegramCommands() {
+    final merged = <ConfiguredTelegramCommand>[];
+    final seen = <String>{};
+    for (final command in config.telegramCommands) {
+      if (seen.add(command.command)) {
+        merged.add(command);
+      }
+    }
+    for (final topic in config.topics) {
+      final commands = topic.telegramCommands;
+      if (commands == null) {
+        continue;
+      }
+      for (final command in commands) {
+        if (seen.add(command.command)) {
+          merged.add(command);
+        }
+      }
+    }
+    return merged;
+  }
+
+  AppConfig _effectiveConfigForTopic(ConfiguredTelegramTopic? topic) {
+    if (topic == null) {
+      return config;
+    }
+    return AppConfig(
+      provider: config.provider,
+      logLevel: config.logLevel,
+      logFormat: config.logFormat,
+      strictConfig: config.strictConfig,
+      validateProjectPath: config.validateProjectPath,
+      name: config.name,
+      botToken: config.botToken,
+      allowedUserIds: config.allowedUserIds,
+      allowedChatIds: config.allowedChatIds,
+      aiCliCmd: config.aiCliCmd,
+      aiCliArgs: config.aiCliArgs,
+      projectPath: topic.projectPath,
+      topics: config.topics,
+      pollTimeoutSec: config.pollTimeoutSec,
+      aiCliTimeout: config.aiCliTimeout,
+      additionalSystemPrompt:
+          topic.additionalSystemPrompt ?? config.additionalSystemPrompt,
+      memory: topic.memory ?? config.memory,
+      memoryFilename: topic.memoryFilename ?? config.memoryFilename,
+      finalResponseOnly: topic.finalResponseOnly ?? config.finalResponseOnly,
+      telegramCommands: topic.telegramCommands ?? config.telegramCommands,
+    );
+  }
+
   /// Resolves an artifact path and ensures it stays inside the project root.
-  String _resolveSafePath(String artifactPath) {
-    final root = p.normalize(p.absolute(config.projectPath));
+  String _resolveSafePath(String artifactPath, {required String projectPath}) {
+    final root = p.normalize(p.absolute(projectPath));
     final full = p.normalize(
       p.isAbsolute(artifactPath)
           ? artifactPath
-          : p.join(config.projectPath, artifactPath),
+          : p.join(projectPath, artifactPath),
     );
 
     if (!(full == root || p.isWithin(root, full))) {
@@ -506,8 +657,8 @@ class BridgeApp implements BotApp {
     return full;
   }
 
-  String _providerLabel() {
-    switch (config.provider) {
+  String _providerLabel(AiProvider provider) {
+    switch (provider) {
       case AiProvider.codex:
         return 'Codex';
       case AiProvider.cursor:
@@ -524,16 +675,22 @@ class BridgeApp implements BotApp {
   /// Sends command/status text and swallows failures caused by shutdown races.
   Future<void> _sendControlMessage({
     required int chatId,
+    int? messageThreadId,
     required String text,
   }) async {
     try {
-      await telegram.sendMessage(chatId: chatId, text: text);
+      await telegram.sendMessage(
+        chatId: chatId,
+        messageThreadId: messageThreadId,
+        text: text,
+      );
     } catch (error) {
       if (_isExpectedControlSendShutdownError(error)) {
         return;
       }
       logger.warn('control_message_send_failed', fields: <String, Object?>{
         'chat_id': chatId,
+        'topic_id': messageThreadId,
         'error': error.toString(),
       });
     }
@@ -565,13 +722,20 @@ class BridgeApp implements BotApp {
 /// Sends periodic `typing` chat actions while a provider run is active.
 class _TypingSignal {
   /// Creates a typing-signal helper for one chat.
-  _TypingSignal({required this.telegram, required this.chatId});
+  _TypingSignal({
+    required this.telegram,
+    required this.chatId,
+    this.messageThreadId,
+  });
 
   /// Telegram client used to send chat actions.
   final TelegramClient telegram;
 
   /// Target chat id that should receive typing events.
   final int chatId;
+
+  /// Optional topic id for the target message thread.
+  final int? messageThreadId;
 
   /// Repeating timer that refreshes the typing indicator.
   Timer? _timer;
@@ -606,7 +770,11 @@ class _TypingSignal {
       return;
     }
     try {
-      await telegram.sendChatAction(chatId: chatId, action: 'typing');
+      await telegram.sendChatAction(
+        chatId: chatId,
+        messageThreadId: messageThreadId,
+        action: 'typing',
+      );
     } catch (_) {
       // Chat action failures should not interrupt the main response flow.
     }

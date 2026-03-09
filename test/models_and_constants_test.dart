@@ -17,13 +17,16 @@ void main() {
     expect(update.updateId, 5);
     expect(update.message!.chatId, 99);
     expect(update.message!.fromUserId, 42);
+    expect(update.message!.messageThreadId, isNull);
     expect(update.message!.text, 'hello');
 
     final systemMessage = TelegramMessage.fromJson(<String, dynamic>{
       'chat': <String, dynamic>{'id': 10},
+      'message_thread_id': 88,
       'text': null,
     });
     expect(systemMessage.fromUserId, 0);
+    expect(systemMessage.messageThreadId, 88);
     expect(systemMessage.text, isNull);
   });
 
@@ -39,9 +42,19 @@ void main() {
     expect(artifact.caption, 'Chart');
   });
 
+  test('TelegramForumTopic parses JSON payloads', () {
+    final topic = TelegramForumTopic.fromJson(<String, dynamic>{
+      'message_thread_id': 123,
+      'name': 'Backend',
+    });
+
+    expect(topic.messageThreadId, 123);
+    expect(topic.name, 'Backend');
+  });
+
   test('default config template and version are exposed', () {
     expect(defaultConfigTemplate, contains('telegram_bot_token'));
     expect(defaultConfigTemplate, contains('allowed_user_ids'));
-    expect(version, '0.2.4');
+    expect(version, '0.2.5');
   });
 }

@@ -64,14 +64,53 @@ void main() {
           TelegramBotCommand(command: 'fix', description: 'Fix issue'),
         ],
       );
-      await client.sendChatAction(chatId: 5, action: 'typing');
+      await client.sendChatAction(
+        chatId: 5,
+        action: 'typing',
+        messageThreadId: 77,
+      );
 
       expect(paths,
           <String>['/botTOKEN/setMyCommands', '/botTOKEN/sendChatAction']);
       expect(requests.first['commands'][0]['command'], 'fix');
       expect(requests.first['commands'][0]['description'], 'Fix issue');
-      expect(
-          requests.last, <String, dynamic>{'chat_id': 5, 'action': 'typing'});
+      expect(requests.last, <String, dynamic>{
+        'chat_id': 5,
+        'action': 'typing',
+        'message_thread_id': 77,
+      });
+    });
+
+    test('createForumTopic serializes payloads and parses result', () async {
+      late String path;
+      late Map<String, dynamic> body;
+      final client = TelegramClient(
+        'TOKEN',
+        client: MockClient((request) async {
+          path = request.url.path;
+          body = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode(<String, dynamic>{
+              'ok': true,
+              'result': <String, dynamic>{
+                'message_thread_id': 12345,
+                'name': 'Backend',
+              },
+            }),
+            200,
+          );
+        }),
+      );
+
+      final topic = await client.createForumTopic(
+        chatId: -100123,
+        name: 'Backend',
+      );
+
+      expect(path, '/botTOKEN/createForumTopic');
+      expect(body, <String, dynamic>{'chat_id': -100123, 'name': 'Backend'});
+      expect(topic.messageThreadId, 12345);
+      expect(topic.name, 'Backend');
     });
 
     test('sendMessage chunks long text and skips blanks', () async {
@@ -118,7 +157,8 @@ void main() {
       expect(sent.first['text'], contains('rest '));
     });
 
-    test('sendMessage formats markdown-like content as Telegram HTML', () async {
+    test('sendMessage formats markdown-like content as Telegram HTML',
+        () async {
       late Map<String, dynamic> body;
       final client = TelegramClient(
         'TOKEN',
@@ -164,7 +204,8 @@ void main() {
 
       await client.sendMessage(
         chatId: 1,
-        text: 'See [report](file:///tmp/report.txt) and [ok](https://example.com).',
+        text:
+            'See [report](file:///tmp/report.txt) and [ok](https://example.com).',
       );
 
       final html = body['text'] as String;

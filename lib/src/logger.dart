@@ -33,8 +33,7 @@ class AppLogger {
     _log(LogLevel.error, message, fields: fields);
   }
 
-  bool _enabled(LogLevel eventLevel) =>
-      eventLevel.index >= level.index;
+  bool _enabled(LogLevel eventLevel) => eventLevel.index >= level.index;
 
   void _log(
     LogLevel eventLevel,
@@ -59,13 +58,12 @@ class AppLogger {
       return;
     }
 
-    final fieldText = fields.entries
-        .map((entry) => '${entry.key}=${entry.value}')
-        .join(' ');
+    final fieldText =
+        fields.entries.map((entry) => '${entry.key}=${entry.value}').join(' ');
     final suffix = fieldText.isEmpty ? '' : ' $fieldText';
-      stderr.writeln(
-        '[${payload['timestamp']}] [${eventLevel.name}] '
-        '[${provider.name}] [$botName] $message$suffix',
-      );
+    stderr.writeln(
+      '[${payload['timestamp']}] [${eventLevel.name}] '
+      '[${provider.name}] [$botName] $message$suffix',
+    );
   }
 }

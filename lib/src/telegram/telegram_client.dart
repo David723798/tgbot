@@ -61,14 +61,31 @@ class TelegramClient {
     );
   }
 
+  /// Creates a forum topic in a forum-enabled supergroup.
+  Future<TelegramForumTopic> createForumTopic({
+    required int chatId,
+    required String name,
+  }) async {
+    final body = await _postWithRetry(
+      'createForumTopic',
+      jsonEncode(<String, dynamic>{'chat_id': chatId, 'name': name}),
+    );
+    return TelegramForumTopic.fromJson(body['result'] as Map<String, dynamic>);
+  }
+
   /// Sends a text message, splitting long responses into safe chunks.
-  Future<void> sendMessage({required int chatId, required String text}) async {
+  Future<void> sendMessage({
+    required int chatId,
+    required String text,
+    int? messageThreadId,
+  }) async {
     if (text.trim().isEmpty) return;
     for (final chunk in _buildFormattedChunks(text, _plainChunkLimit)) {
       final htmlPayload = <String, dynamic>{
         'chat_id': chatId,
         'text': chunk.html,
         'parse_mode': 'HTML',
+        if (messageThreadId != null) 'message_thread_id': messageThreadId,
       };
       try {
         await _postWithRetry('sendMessage', jsonEncode(htmlPayload));
@@ -78,7 +95,11 @@ class TelegramClient {
         }
         await _postWithRetry(
           'sendMessage',
-          jsonEncode(<String, dynamic>{'chat_id': chatId, 'text': chunk.plain}),
+          jsonEncode(<String, dynamic>{
+            'chat_id': chatId,
+            'text': chunk.plain,
+            if (messageThreadId != null) 'message_thread_id': messageThreadId,
+          }),
         );
       }
     }
@@ -88,10 +109,15 @@ class TelegramClient {
   Future<void> sendChatAction({
     required int chatId,
     required String action,
+    int? messageThreadId,
   }) async {
     await _postWithRetry(
       'sendChatAction',
-      jsonEncode(<String, dynamic>{'chat_id': chatId, 'action': action}),
+      jsonEncode(<String, dynamic>{
+        'chat_id': chatId,
+        'action': action,
+        if (messageThreadId != null) 'message_thread_id': messageThreadId,
+      }),
     );
   }
 
@@ -100,6 +126,7 @@ class TelegramClient {
     required int chatId,
     required String filePath,
     String? caption,
+    int? messageThreadId,
   }) async {
     final formattedCaption = _formatCaption(caption);
     try {
@@ -107,6 +134,9 @@ class TelegramClient {
         // Multipart request for the photo upload.
         final req = http.MultipartRequest('POST', _uri('sendPhoto'))
           ..fields['chat_id'] = '$chatId';
+        if (messageThreadId != null) {
+          req.fields['message_thread_id'] = '$messageThreadId';
+        }
         if (formattedCaption != null) {
           req.fields['caption'] = formattedCaption.html;
           req.fields['parse_mode'] = 'HTML';
@@ -122,6 +152,9 @@ class TelegramClient {
         final req = http.MultipartRequest('POST', _uri('sendPhoto'))
           ..fields['chat_id'] = '$chatId'
           ..fields['caption'] = formattedCaption.plain;
+        if (messageThreadId != null) {
+          req.fields['message_thread_id'] = '$messageThreadId';
+        }
         req.files.add(await http.MultipartFile.fromPath('photo', filePath));
         return req;
       });
@@ -133,6 +166,7 @@ class TelegramClient {
     required int chatId,
     required String filePath,
     String? caption,
+    int? messageThreadId,
   }) async {
     final formattedCaption = _formatCaption(caption);
     try {
@@ -140,6 +174,9 @@ class TelegramClient {
         // Multipart request for the document upload.
         final req = http.MultipartRequest('POST', _uri('sendDocument'))
           ..fields['chat_id'] = '$chatId';
+        if (messageThreadId != null) {
+          req.fields['message_thread_id'] = '$messageThreadId';
+        }
         if (formattedCaption != null) {
           req.fields['caption'] = formattedCaption.html;
           req.fields['parse_mode'] = 'HTML';
@@ -155,6 +192,9 @@ class TelegramClient {
         final req = http.MultipartRequest('POST', _uri('sendDocument'))
           ..fields['chat_id'] = '$chatId'
           ..fields['caption'] = formattedCaption.plain;
+        if (messageThreadId != null) {
+          req.fields['message_thread_id'] = '$messageThreadId';
+        }
         req.files.add(await http.MultipartFile.fromPath('document', filePath));
         return req;
       });

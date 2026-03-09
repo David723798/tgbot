@@ -123,6 +123,150 @@ bots:
       );
     });
 
+    test('defaults final_response_only to true when omitted', () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-config-');
+      addTearDown(() => tempDir.delete(recursive: true));
+
+      final project = Directory('${tempDir.path}/project')..createSync();
+      final file = File('${tempDir.path}/default-final-only.yaml')
+        ..writeAsStringSync('''
+bots:
+  - name: bot
+    telegram_bot_token: TOKEN
+    allowed_user_ids: 1
+    project_path: ${project.path}
+''');
+
+      final config = AppConfig.loadMany(path: file.path).single;
+
+      expect(config.finalResponseOnly, isTrue);
+    });
+
+    test('parses topic declarations by chat and name', () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-config-');
+      addTearDown(() => tempDir.delete(recursive: true));
+
+      final defaultProject = Directory('${tempDir.path}/default')
+        ..createSync(recursive: true);
+      final topicProject = Directory('${tempDir.path}/topic')
+        ..createSync(recursive: true);
+      final file = File('${tempDir.path}/topics-by-name.yaml')
+        ..writeAsStringSync('''
+defaults:
+  project_path: ${defaultProject.path}
+bots:
+  - name: bot
+    telegram_bot_token: TOKEN
+    allowed_user_ids: 1
+    topics:
+      - chat_id: -100123
+        name: Backend
+        project_path: ${topicProject.path}
+''');
+
+      final config = AppConfig.loadMany(path: file.path).single;
+
+      expect(config.topics, hasLength(1));
+      expect(config.topics.single.chatId, -100123);
+      expect(config.topics.single.name, 'Backend');
+      expect(config.topics.single.projectPath,
+          Directory(topicProject.path).absolute.path);
+    });
+
+    test('parses topic-specific command and response overrides', () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-config-');
+      addTearDown(() => tempDir.delete(recursive: true));
+
+      final topicProject = Directory('${tempDir.path}/topic')
+        ..createSync(recursive: true);
+      final file = File('${tempDir.path}/topic-overrides.yaml')
+        ..writeAsStringSync('''
+bots:
+  - name: bot
+    telegram_bot_token: TOKEN
+    allowed_chat_ids:
+      - -100123
+    project_path: ${tempDir.path}
+    topics:
+      - name: Backend
+        project_path: ${topicProject.path}
+        final_response_only: true
+        memory: true
+        memory_filename: TOPIC_MEMORY.md
+        additional_system_prompt: " topic rules "
+        telegram_commands:
+          - command: topic_fix
+            description: "Fix this topic issue: {args}"
+''');
+
+      final config = AppConfig.loadMany(path: file.path).single;
+      final topic = config.topics.single;
+
+      expect(topic.finalResponseOnly, isTrue);
+      expect(topic.memory, isTrue);
+      expect(topic.memoryFilename, 'TOPIC_MEMORY.md');
+      expect(topic.additionalSystemPrompt, 'topic rules');
+      expect(
+        topic.telegramCommands!.map((command) => command.command),
+        <String>['topic_fix', 'start', 'new', 'stop', 'restart'],
+      );
+    });
+
+    test('allows omitting bot project_path when topics are configured',
+        () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-config-');
+      addTearDown(() => tempDir.delete(recursive: true));
+
+      final topicProject = Directory('${tempDir.path}/topic')
+        ..createSync(recursive: true);
+      final file = File('${tempDir.path}/topics-only.yaml')
+        ..writeAsStringSync('''
+bots:
+  - name: bot
+    telegram_bot_token: TOKEN
+    allowed_chat_ids:
+      - -100123
+    topics:
+      - name: Backend
+        project_path: ${topicProject.path}
+''');
+
+      final config = AppConfig.loadMany(path: file.path).single;
+
+      expect(config.projectPath, isNull);
+      expect(config.topics, hasLength(1));
+      expect(config.topics.single.chatId, -100123);
+    });
+
+    test('defaults topic chat_id from a single allowed_chat_ids entry',
+        () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-config-');
+      addTearDown(() => tempDir.delete(recursive: true));
+
+      final defaultProject = Directory('${tempDir.path}/default')
+        ..createSync(recursive: true);
+      final topicProject = Directory('${tempDir.path}/topic')
+        ..createSync(recursive: true);
+      final file = File('${tempDir.path}/topics-default-chat.yaml')
+        ..writeAsStringSync('''
+defaults:
+  project_path: ${defaultProject.path}
+bots:
+  - name: bot
+    telegram_bot_token: TOKEN
+    allowed_chat_ids:
+      - -100123
+    topics:
+      - name: Backend
+        project_path: ${topicProject.path}
+''');
+
+      final config = AppConfig.loadMany(path: file.path).single;
+
+      expect(config.topics.single.chatId, -100123);
+      expect(config.topics.single.name, 'Backend');
+    });
+
     test('keeps custom restart command and dedupes built-in restart', () async {
       final tempDir = await Directory.systemTemp.createTemp('tgbot-config-');
       addTearDown(() => tempDir.delete(recursive: true));
@@ -308,6 +452,46 @@ bots:
       - command: Bad-Name
         description: invalid
 ''',
+        '''
+bots:
+  - name: bot
+    telegram_bot_token: TOKEN
+    allowed_user_ids: 1
+    project_path: ${tempDir.path}
+    topics: nope
+''',
+        '''
+bots:
+  - name: bot
+    telegram_bot_token: TOKEN
+    allowed_user_ids: 1
+    project_path: ${tempDir.path}
+    topics:
+      - nope
+''',
+        '''
+bots:
+  - name: bot
+    telegram_bot_token: TOKEN
+    allowed_user_ids: 1
+    project_path: ${tempDir.path}
+    topics:
+      - chat_id: nope
+        name: Backend
+        project_path: ${tempDir.path}
+''',
+        '''
+bots:
+  - name: bot
+    telegram_bot_token: TOKEN
+    allowed_chat_ids:
+      - -100123
+      - -100456
+    project_path: ${tempDir.path}
+    topics:
+      - name: Backend
+        project_path: ${tempDir.path}
+''',
       ];
 
       for (var i = 0; i < cases.length; i++) {
@@ -433,6 +617,39 @@ bots:
             (error) => error.path,
             'path',
             'bots[0].project_path',
+          ),
+        ),
+      );
+    });
+
+    test('validates topic project paths when validate_project_path is true',
+        () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-config-');
+      addTearDown(() => tempDir.delete(recursive: true));
+
+      final missingPath = '${tempDir.path}/missing-topic-project';
+      final file = File('${tempDir.path}/validate-topic-project.yaml')
+        ..writeAsStringSync('''
+defaults:
+  validate_project_path: true
+bots:
+  - name: bot
+    telegram_bot_token: TOKEN
+    allowed_user_ids: 1
+    project_path: ${tempDir.path}
+    topics:
+      - chat_id: -100123
+        name: Backend
+        project_path: $missingPath
+''');
+
+      expect(
+        () => AppConfig.loadMany(path: file.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (error) => error.path,
+            'path',
+            'bots[0].topics[0].project_path',
           ),
         ),
       );

@@ -42,7 +42,8 @@ class AppConfig {
     this.allowedChatIds = const <int>[],
     required this.aiCliCmd,
     required this.aiCliArgs,
-    required this.projectPath,
+    this.projectPath,
+    this.topics = const <ConfiguredTelegramTopic>[],
     required this.pollTimeoutSec,
     required this.aiCliTimeout,
     required this.additionalSystemPrompt,
@@ -86,7 +87,10 @@ class AppConfig {
   final List<String> aiCliArgs;
 
   /// Working directory where Codex runs.
-  final String projectPath;
+  final String? projectPath;
+
+  /// Forum topics that should exist and map to a project path.
+  final List<ConfiguredTelegramTopic> topics;
 
   /// Telegram long-poll timeout in seconds.
   final int pollTimeoutSec;
@@ -148,6 +152,7 @@ class AppConfig {
     'strict_config',
     'validate_project_path',
     'allowed_chat_ids',
+    'topics',
   };
   static const Set<String> _botKeys = <String>{
     'name',
@@ -169,10 +174,21 @@ class AppConfig {
     'log_format',
     'strict_config',
     'validate_project_path',
+    'topics',
   };
   static const Set<String> _telegramCommandKeys = <String>{
     'command',
     'description',
+  };
+  static const Set<String> _topicKeys = <String>{
+    'chat_id',
+    'name',
+    'project_path',
+    'additional_system_prompt',
+    'memory',
+    'memory_filename',
+    'final_response_only',
+    'telegram_commands',
   };
 
   /// Loads all bot configurations declared in the YAML file at [path].
@@ -287,15 +303,6 @@ class AppConfig {
         ) ??
         1000;
 
-    final projectPathRaw = _optionalString(bot, 'project_path') ??
-        _optionalString(defaults, 'project_path');
-    if (projectPathRaw == null || projectPathRaw.isEmpty) {
-      throw ConfigException(
-        'Missing required key: project_path',
-        path: '$path.project_path',
-      );
-    }
-
     final aiCliCmd = _optionalString(bot, 'ai_cli_cmd') ??
         _optionalString(defaults, 'ai_cli_cmd') ??
         _defaultCommandForProvider(provider);
@@ -333,7 +340,7 @@ class AppConfig {
           'final_response_only',
           path: 'defaults.final_response_only',
         ) ??
-        false;
+        true;
     final botLogLevel = _parseLogLevel(
       _optionalString(bot, 'log_level') ??
           _optionalString(defaults, 'log_level'),
@@ -371,24 +378,36 @@ class AppConfig {
       configuredTelegramCommands,
     );
 
-    final projectPath = Directory(projectPathRaw).absolute.path;
-    if (validateProjectPath) {
-      final projectDir = Directory(projectPath);
-      if (!projectDir.existsSync()) {
-        throw ConfigException(
-          'project_path does not exist: $projectPath',
-          path: '$path.project_path',
-        );
-      }
-      try {
-        projectDir.listSync(followLinks: false).isNotEmpty;
-      } on FileSystemException {
-        throw ConfigException(
-          'project_path is not readable: $projectPath',
-          path: '$path.project_path',
-        );
-      }
+    final topics = _asTopics(
+          bot['topics'],
+          path: '$path.topics',
+          strictConfig: botStrictConfig,
+          validateProjectPath: validateProjectPath,
+          allowedChatIds: allowedChats,
+        ) ??
+        _asTopics(
+          defaults['topics'],
+          path: 'defaults.topics',
+          strictConfig: strictConfig,
+          validateProjectPath: validateProjectPath,
+          allowedChatIds: allowedChats,
+        ) ??
+        const <ConfiguredTelegramTopic>[];
+    final projectPathRaw = _optionalString(bot, 'project_path') ??
+        _optionalString(defaults, 'project_path');
+    if ((projectPathRaw == null || projectPathRaw.isEmpty) && topics.isEmpty) {
+      throw ConfigException(
+        'Missing required key: project_path',
+        path: '$path.project_path',
+      );
     }
+    final projectPath = projectPathRaw == null || projectPathRaw.isEmpty
+        ? null
+        : _normalizeProjectPath(
+            projectPathRaw,
+            path: '$path.project_path',
+            validateProjectPath: validateProjectPath,
+          );
 
     return AppConfig(
       provider: provider,
@@ -403,6 +422,7 @@ class AppConfig {
       aiCliCmd: aiCliCmd,
       aiCliArgs: aiCliArgs,
       projectPath: projectPath,
+      topics: topics,
       pollTimeoutSec: pollTimeout,
       aiCliTimeout: Duration(seconds: aiCliTimeoutSec),
       additionalSystemPrompt: _normalizeOptionalPrompt(additionalSystemPrompt),
@@ -705,6 +725,125 @@ class AppConfig {
         .toList(growable: false);
   }
 
+  /// Parses configured forum topics from a YAML list.
+  static List<ConfiguredTelegramTopic>? _asTopics(
+    Object? value, {
+    required String path,
+    required bool strictConfig,
+    required bool validateProjectPath,
+    required List<int> allowedChatIds,
+  }) {
+    if (value == null) {
+      return null;
+    }
+    if (value is! YamlList) {
+      throw ConfigException('topics must be a list.', path: path);
+    }
+
+    final topics = <ConfiguredTelegramTopic>[];
+    for (var i = 0; i < value.length; i++) {
+      final entry = value[i];
+      if (entry is! YamlMap) {
+        throw ConfigException('topics[$i] must be a map.', path: '$path[$i]');
+      }
+      if (strictConfig) {
+        _validateKnownKeys(entry, _topicKeys, path: '$path[$i]');
+      }
+      final chatId = _resolveTopicChatId(entry,
+          path: '$path[$i]', allowedChatIds: allowedChatIds);
+      final name = _requiredString(entry, 'name', path: '$path[$i].name');
+      final projectPathRaw = _requiredString(
+        entry,
+        'project_path',
+        path: '$path[$i].project_path',
+      );
+      final configuredTelegramCommands = _asTelegramCommands(
+        entry['telegram_commands'],
+        path: '$path[$i].telegram_commands',
+        strictConfig: strictConfig,
+      );
+      topics.add(
+        ConfiguredTelegramTopic(
+          chatId: chatId,
+          name: name,
+          projectPath: _normalizeProjectPath(
+            projectPathRaw,
+            path: '$path[$i].project_path',
+            validateProjectPath: validateProjectPath,
+          ),
+          additionalSystemPrompt: _normalizeOptionalPrompt(
+            _optionalString(entry, 'additional_system_prompt'),
+          ),
+          memory: _optionalBool(entry, 'memory', path: '$path[$i].memory'),
+          memoryFilename: _optionalString(entry, 'memory_filename') == null
+              ? null
+              : _normalizeMemoryFilename(
+                  _optionalString(entry, 'memory_filename')),
+          finalResponseOnly: _optionalBool(
+            entry,
+            'final_response_only',
+            path: '$path[$i].final_response_only',
+          ),
+          telegramCommands: configuredTelegramCommands == null
+              ? null
+              : _withSystemTelegramCommands(configuredTelegramCommands),
+        ),
+      );
+    }
+
+    if (topics.isEmpty) {
+      throw ConfigException(
+        'topics must not be empty when provided.',
+        path: path,
+      );
+    }
+    return List<ConfiguredTelegramTopic>.unmodifiable(topics);
+  }
+
+  static int _resolveTopicChatId(
+    YamlMap entry, {
+    required String path,
+    required List<int> allowedChatIds,
+  }) {
+    final explicit = _optionalInt(entry, 'chat_id', path: '$path.chat_id');
+    if (explicit != null) {
+      return explicit;
+    }
+    if (allowedChatIds.length == 1) {
+      return allowedChatIds.single;
+    }
+    throw ConfigException(
+      'topics[].chat_id is required unless exactly one allowed_chat_ids value is configured for the bot.',
+      path: '$path.chat_id',
+    );
+  }
+
+  static String _normalizeProjectPath(
+    String rawPath, {
+    required String path,
+    required bool validateProjectPath,
+  }) {
+    final projectPath = Directory(rawPath).absolute.path;
+    if (validateProjectPath) {
+      final projectDir = Directory(projectPath);
+      if (!projectDir.existsSync()) {
+        throw ConfigException(
+          'project_path does not exist: $projectPath',
+          path: path,
+        );
+      }
+      try {
+        projectDir.listSync(followLinks: false).isNotEmpty;
+      } on FileSystemException {
+        throw ConfigException(
+          'project_path is not readable: $projectPath',
+          path: path,
+        );
+      }
+    }
+    return projectPath;
+  }
+
   /// Parses the optional `telegram_commands` YAML list.
   static List<ConfiguredTelegramCommand>? _asTelegramCommands(
     Object? value, {
@@ -811,4 +950,43 @@ class ConfiguredTelegramCommand {
 
   /// Description shown in Telegram and reused as a prompt template.
   final String description;
+}
+
+/// Configured Telegram forum topic that should map to a project path.
+class ConfiguredTelegramTopic {
+  /// Creates an immutable topic configuration.
+  const ConfiguredTelegramTopic({
+    required this.chatId,
+    required this.name,
+    required this.projectPath,
+    this.additionalSystemPrompt,
+    this.memory,
+    this.memoryFilename,
+    this.finalResponseOnly,
+    this.telegramCommands,
+  });
+
+  /// Chat where the forum topic should exist.
+  final int chatId;
+
+  /// Forum topic name passed to Telegram when auto-creating it.
+  final String name;
+
+  /// Project path used for that topic.
+  final String projectPath;
+
+  /// Optional extra system prompt override for this topic.
+  final String? additionalSystemPrompt;
+
+  /// Optional memory enable/disable override for this topic.
+  final bool? memory;
+
+  /// Optional memory filename override for this topic.
+  final String? memoryFilename;
+
+  /// Optional final-response-only override for this topic.
+  final bool? finalResponseOnly;
+
+  /// Optional topic-specific commands merged with built-ins.
+  final List<ConfiguredTelegramCommand>? telegramCommands;
 }

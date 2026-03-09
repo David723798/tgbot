@@ -42,4 +42,19 @@ void main() {
     expect(store.hasActiveRun(1), isFalse);
     expect(await store.stopRun(1), isFalse);
   });
+
+  test('SessionStore isolates topic sessions within the same chat', () async {
+    final store = SessionStore();
+
+    store.setThreadId(1, 'thread-root');
+    store.setThreadId(1, 'thread-topic', topicId: 77);
+
+    expect(store.current(1).threadId, 'thread-root');
+    expect(store.current(1, topicId: 77).threadId, 'thread-topic');
+
+    store.reset(1, topicId: 77);
+
+    expect(store.current(1).threadId, 'thread-root');
+    expect(store.current(1, topicId: 77).threadId, isNull);
+  });
 }

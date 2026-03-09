@@ -25,9 +25,9 @@ class BotSupervisor {
     BotAppFactory? appFactory,
     RestartNotifier? notifier,
     this.startupProbeWindow = const Duration(milliseconds: 200),
-  })  : _configLoader = configLoader ?? ((path) => AppConfig.loadMany(path: path)),
-        _appFactory =
-            appFactory ??
+  })  : _configLoader =
+            configLoader ?? ((path) => AppConfig.loadMany(path: path)),
+        _appFactory = appFactory ??
             ((config, onRestartRequested) => BridgeApp.fromConfig(
                   config,
                   onRestartRequested: onRestartRequested,

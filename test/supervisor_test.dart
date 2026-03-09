@@ -10,7 +10,9 @@ void main() {
   group('BotSupervisor', () {
     test('starts configured apps and stops them on shutdown', () async {
       final loaderPaths = <String>[];
-      var configs = <AppConfig>[_config(name: 'bot-a', allowedUserIds: <int>[1])];
+      var configs = <AppConfig>[
+        _config(name: 'bot-a', allowedUserIds: <int>[1])
+      ];
       final created = <_FakeBotApp>[];
       final supervisor = BotSupervisor(
         configPath: '/tmp/custom.yaml',
@@ -35,7 +37,9 @@ void main() {
     });
 
     test('authorized restart reloads config and swaps active apps', () async {
-      var configs = <AppConfig>[_config(name: 'old-bot', allowedUserIds: <int>[1])];
+      var configs = <AppConfig>[
+        _config(name: 'old-bot', allowedUserIds: <int>[1])
+      ];
       final created = <_FakeBotApp>[];
       final notifications = <_NotificationCall>[];
       final supervisor = BotSupervisor(
@@ -61,7 +65,9 @@ void main() {
       await _waitUntil(() => created.length == 1 && created.first.running);
       final old = created.single;
 
-      configs = <AppConfig>[_config(name: 'new-bot', allowedUserIds: <int>[1])];
+      configs = <AppConfig>[
+        _config(name: 'new-bot', allowedUserIds: <int>[1])
+      ];
       final outcome = await supervisor.requestRestart(
         requesterUserId: 1,
         requesterChatId: 9,
@@ -104,7 +110,8 @@ void main() {
       await runFuture;
     });
 
-    test('restart rollback keeps previous apps when config reload fails', () async {
+    test('restart rollback keeps previous apps when config reload fails',
+        () async {
       var shouldThrow = false;
       final created = <_FakeBotApp>[];
       final supervisor = BotSupervisor(
@@ -113,7 +120,9 @@ void main() {
           if (shouldThrow) {
             throw StateError('bad yaml');
           }
-          return <AppConfig>[_config(name: 'stable-bot', allowedUserIds: <int>[1])];
+          return <AppConfig>[
+            _config(name: 'stable-bot', allowedUserIds: <int>[1])
+          ];
         },
         appFactory: (config, _) {
           final app = _FakeBotApp(config: config);
@@ -140,7 +149,8 @@ void main() {
       await runFuture;
     });
 
-    test('restart rollback stops partially started next apps on startup failure',
+    test(
+        'restart rollback stops partially started next apps on startup failure',
         () async {
       var generation = 0;
       final created = <_FakeBotApp>[];
@@ -148,7 +158,9 @@ void main() {
         configPath: '/tmp/tgbot.yaml',
         configLoader: (_) {
           if (generation == 0) {
-            return <AppConfig>[_config(name: 'old-bot', allowedUserIds: <int>[1])];
+            return <AppConfig>[
+              _config(name: 'old-bot', allowedUserIds: <int>[1])
+            ];
           }
           return <AppConfig>[
             _config(name: 'next-ok', allowedUserIds: <int>[1]),
@@ -195,9 +207,13 @@ void main() {
         startupProbeWindow: const Duration(milliseconds: 400),
         configLoader: (_) {
           if (generation == 0) {
-            return <AppConfig>[_config(name: 'old-bot', allowedUserIds: <int>[1])];
+            return <AppConfig>[
+              _config(name: 'old-bot', allowedUserIds: <int>[1])
+            ];
           }
-          return <AppConfig>[_config(name: 'new-bot', allowedUserIds: <int>[1])];
+          return <AppConfig>[
+            _config(name: 'new-bot', allowedUserIds: <int>[1])
+          ];
         },
         appFactory: (config, _) {
           final app = _FakeBotApp(config: config);
@@ -269,7 +285,8 @@ AppConfig _config({
     additionalSystemPrompt: null,
     finalResponseOnly: false,
     telegramCommands: const <ConfiguredTelegramCommand>[
-      ConfiguredTelegramCommand(command: 'start', description: 'Show usage help'),
+      ConfiguredTelegramCommand(
+          command: 'start', description: 'Show usage help'),
       ConfiguredTelegramCommand(
         command: 'new',
         description: 'Start a new session',

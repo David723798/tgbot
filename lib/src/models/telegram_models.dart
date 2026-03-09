@@ -27,6 +27,7 @@ class TelegramMessage {
     required this.chatId,
     required this.fromUserId,
     required this.text,
+    this.messageThreadId,
   });
 
   /// Chat id where the message was received.
@@ -34,6 +35,9 @@ class TelegramMessage {
 
   /// Sender user id.
   final int fromUserId;
+
+  /// Topic id for forum/supergroup topic messages.
+  final int? messageThreadId;
 
   /// Text body, when the message contains text.
   final String? text;
@@ -48,6 +52,7 @@ class TelegramMessage {
     return TelegramMessage(
       chatId: chat['id'] as int,
       fromUserId: (from?['id'] ?? 0) as int,
+      messageThreadId: json['message_thread_id'] as int?,
       text: json['text'] as String?,
     );
   }
@@ -66,4 +71,24 @@ class ArtifactResponse {
 
   /// Optional caption sent with the artifact upload.
   final String? caption;
+}
+
+/// Telegram forum topic returned by topic-management endpoints.
+class TelegramForumTopic {
+  /// Creates a forum topic descriptor.
+  TelegramForumTopic({required this.messageThreadId, required this.name});
+
+  /// Unique identifier for messages in this topic inside the chat.
+  final int messageThreadId;
+
+  /// Topic name as returned by Telegram.
+  final String name;
+
+  /// Parses a Telegram forum topic from JSON.
+  factory TelegramForumTopic.fromJson(Map<String, dynamic> json) {
+    return TelegramForumTopic(
+      messageThreadId: json['message_thread_id'] as int,
+      name: json['name'] as String,
+    );
+  }
 }

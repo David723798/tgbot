@@ -13,6 +13,7 @@ import 'package:tgbot/src/runner/opencode_runner.dart';
 import 'package:tgbot/src/runtime/restart_contract.dart';
 import 'package:tgbot/src/session/session_store.dart';
 import 'package:tgbot/src/telegram/telegram_client.dart';
+import 'package:tgbot/src/topic/topic_registry.dart';
 
 void main() {
   group('BridgeApp', () {
@@ -198,6 +199,369 @@ void main() {
 
       expect(codex.prompts, <String>['chat-allowed']);
       expect(telegram.sentMessages.single.text, 'ok');
+    });
+
+    test('routes topic messages to topic-specific project paths and sessions',
+        () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-topic-');
+      addTearDown(() => tempDir.delete(recursive: true));
+      final defaultProject = Directory('${tempDir.path}/default')
+        ..createSync(recursive: true);
+      final topicProject = Directory('${tempDir.path}/topic-77')
+        ..createSync(recursive: true);
+
+      final telegram = _FakeTelegramClient(
+        updates: <List<TelegramUpdate>>[
+          <TelegramUpdate>[
+            TelegramUpdate(
+              updateId: 1,
+              message: TelegramMessage(
+                chatId: -1001,
+                fromUserId: 1,
+                messageThreadId: 77,
+                text: 'topic run',
+              ),
+            ),
+            TelegramUpdate(
+              updateId: 2,
+              message: TelegramMessage(
+                chatId: -1001,
+                fromUserId: 1,
+                text: 'root run',
+              ),
+            ),
+          ],
+        ],
+      );
+      final defaultRunner = _FakeCodexRunner(
+        projectPath: defaultProject.path,
+        result: CodexResult(text: 'default ok', messages: const <String>[]),
+      );
+      final topicRunner = _FakeCodexRunner(
+        projectPath: topicProject.path,
+        result: CodexResult(
+          text: 'topic ok',
+          messages: const <String>[],
+          threadId: 'topic-thread',
+        ),
+      );
+      final registry = TopicRegistry(
+        path: '${tempDir.path}/topic-registry.json',
+      );
+      await registry.store(
+        botName: 'bot',
+        chatId: -1001,
+        topicName: 'Topic 77',
+        topicId: 77,
+      );
+      final app = BridgeApp(
+        config: _config(
+          defaultProject.path,
+          topics: <ConfiguredTelegramTopic>[
+            ConfiguredTelegramTopic(
+              chatId: -1001,
+              name: 'Topic 77',
+              projectPath: topicProject.path,
+            ),
+          ],
+        ),
+        telegram: telegram,
+        codex: defaultRunner,
+        runnerFactory: (config, projectPath) {
+          if (projectPath == topicProject.path) {
+            return topicRunner;
+          }
+          return _FakeCodexRunner(projectPath: projectPath);
+        },
+        topicRegistry: registry,
+        sessions: SessionStore(),
+      );
+
+      await _runUntilIdle(app);
+
+      expect(topicRunner.prompts, <String>['topic run']);
+      expect(defaultRunner.prompts, <String>['root run']);
+      expect(telegram.sentMessages[0].messageThreadId, 77);
+      expect(telegram.sentMessages[0].text, 'topic ok');
+      expect(telegram.sentMessages[1].messageThreadId, isNull);
+      expect(telegram.sentMessages[1].text, 'default ok');
+      expect(app.sessions.current(-1001, topicId: 77).threadId, 'topic-thread');
+      expect(app.sessions.current(-1001).threadId, isNull);
+    });
+
+    test('creates configured topics by name and persists the resolved topic id',
+        () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-topic-');
+      addTearDown(() => tempDir.delete(recursive: true));
+      final defaultProject = Directory('${tempDir.path}/default')
+        ..createSync(recursive: true);
+      final topicProject = Directory('${tempDir.path}/backend')
+        ..createSync(recursive: true);
+      final registry = TopicRegistry(
+        path: '${tempDir.path}/topic-registry.json',
+      );
+      final telegram = _FakeTelegramClient(
+        createdTopicsByName: <String, TelegramForumTopic>{
+          'Backend': TelegramForumTopic(messageThreadId: 456, name: 'Backend'),
+        },
+        updates: <List<TelegramUpdate>>[
+          <TelegramUpdate>[
+            TelegramUpdate(
+              updateId: 1,
+              message: TelegramMessage(
+                chatId: -100123,
+                fromUserId: 1,
+                messageThreadId: 456,
+                text: 'deploy',
+              ),
+            ),
+          ],
+        ],
+      );
+      final defaultRunner = _FakeCodexRunner(
+        projectPath: defaultProject.path,
+        result: CodexResult(text: 'default ok', messages: const <String>[]),
+      );
+      final topicRunner = _FakeCodexRunner(
+        projectPath: topicProject.path,
+        result: CodexResult(text: 'topic ok', messages: const <String>[]),
+      );
+      final app = BridgeApp(
+        config: _config(
+          defaultProject.path,
+          topics: <ConfiguredTelegramTopic>[
+            ConfiguredTelegramTopic(
+              chatId: -100123,
+              name: 'Backend',
+              projectPath: topicProject.path,
+            ),
+          ],
+        ),
+        telegram: telegram,
+        codex: defaultRunner,
+        runnerFactory: (config, projectPath) {
+          if (projectPath == topicProject.path) {
+            return topicRunner;
+          }
+          return _FakeCodexRunner(projectPath: projectPath);
+        },
+        topicRegistry: registry,
+        sessions: SessionStore(),
+      );
+
+      await _runUntilIdle(app);
+
+      expect(telegram.createdTopics, hasLength(1));
+      expect(telegram.createdTopics.single.chatId, -100123);
+      expect(telegram.createdTopics.single.name, 'Backend');
+      expect(topicRunner.prompts, <String>['deploy']);
+      expect(defaultRunner.prompts, isEmpty);
+      expect(telegram.sentMessages.single.messageThreadId, 456);
+      expect(
+        registry.lookup(botName: 'bot', chatId: -100123, topicName: 'Backend'),
+        456,
+      );
+    });
+
+    test('uses topic-specific telegram commands and start help', () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-topic-');
+      addTearDown(() => tempDir.delete(recursive: true));
+      final topicProject = Directory('${tempDir.path}/backend')
+        ..createSync(recursive: true);
+      final registry = TopicRegistry(
+        path: '${tempDir.path}/topic-registry.json',
+      );
+      await registry.store(
+        botName: 'bot',
+        chatId: -100123,
+        topicName: 'Backend',
+        topicId: 456,
+      );
+      final telegram = _FakeTelegramClient(
+        updates: <List<TelegramUpdate>>[
+          <TelegramUpdate>[
+            TelegramUpdate(
+              updateId: 1,
+              message: TelegramMessage(
+                chatId: -100123,
+                fromUserId: 1,
+                messageThreadId: 456,
+                text: '/start',
+              ),
+            ),
+            TelegramUpdate(
+              updateId: 2,
+              message: TelegramMessage(
+                chatId: -100123,
+                fromUserId: 1,
+                messageThreadId: 456,
+                text: '/topic_fix bug',
+              ),
+            ),
+          ],
+        ],
+      );
+      final topicRunner = _FakeCodexRunner(
+        projectPath: topicProject.path,
+        result: CodexResult(text: 'topic ok', messages: const <String>[]),
+      );
+      final app = BridgeApp(
+        config: _config(
+          null,
+          allowedUserIds: const <int>[],
+          allowedChatIds: const <int>[-100123],
+          topics: <ConfiguredTelegramTopic>[
+            ConfiguredTelegramTopic(
+              chatId: -100123,
+              name: 'Backend',
+              projectPath: topicProject.path,
+              telegramCommands: const <ConfiguredTelegramCommand>[
+                ConfiguredTelegramCommand(
+                  command: 'topic_fix',
+                  description: 'Fix this topic issue: {args}',
+                ),
+                ConfiguredTelegramCommand(
+                  command: 'start',
+                  description: 'Show usage help',
+                ),
+                ConfiguredTelegramCommand(
+                  command: 'new',
+                  description: 'Start a new session',
+                ),
+                ConfiguredTelegramCommand(
+                  command: 'stop',
+                  description: 'Stop the active AI CLI run',
+                ),
+                ConfiguredTelegramCommand(
+                  command: 'restart',
+                  description: 'Restart all bots and reload config',
+                ),
+              ],
+            ),
+          ],
+        ),
+        telegram: telegram,
+        runnerFactory: (config, projectPath) => topicRunner,
+        topicRegistry: registry,
+        sessions: SessionStore(),
+      );
+
+      await _runUntilIdle(app);
+
+      expect(telegram.sentMessages.first.text,
+          contains('/topic_fix - Fix this topic issue: {args}'));
+      expect(topicRunner.prompts, <String>['Fix this topic issue: bug']);
+    });
+
+    test('uses topic-specific final_response_only override', () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-topic-');
+      addTearDown(() => tempDir.delete(recursive: true));
+      final topicProject = Directory('${tempDir.path}/backend')
+        ..createSync(recursive: true);
+      final registry = TopicRegistry(
+        path: '${tempDir.path}/topic-registry.json',
+      );
+      await registry.store(
+        botName: 'bot',
+        chatId: -100123,
+        topicName: 'Backend',
+        topicId: 456,
+      );
+      final telegram = _FakeTelegramClient(
+        updates: <List<TelegramUpdate>>[
+          <TelegramUpdate>[
+            TelegramUpdate(
+              updateId: 1,
+              message: TelegramMessage(
+                chatId: -100123,
+                fromUserId: 1,
+                messageThreadId: 456,
+                text: 'run',
+              ),
+            ),
+          ],
+        ],
+      );
+      final topicRunner = _FakeCodexRunner(
+        projectPath: topicProject.path,
+        streamedMessages: const <String>['progress', 'almost there'],
+        result: CodexResult(
+          text: 'done',
+          messages: const <String>['progress', 'almost there', 'done'],
+        ),
+      );
+      final app = BridgeApp(
+        config: _config(
+          null,
+          finalResponseOnly: false,
+          allowedUserIds: const <int>[],
+          allowedChatIds: const <int>[-100123],
+          topics: <ConfiguredTelegramTopic>[
+            ConfiguredTelegramTopic(
+              chatId: -100123,
+              name: 'Backend',
+              projectPath: topicProject.path,
+              finalResponseOnly: true,
+            ),
+          ],
+        ),
+        telegram: telegram,
+        runnerFactory: (config, projectPath) => topicRunner,
+        topicRegistry: registry,
+        sessions: SessionStore(),
+      );
+
+      await _runUntilIdle(app);
+
+      expect(
+        telegram.sentMessages.map((entry) => entry.text),
+        <String>['done'],
+      );
+    });
+
+    test('reports when no default project is configured for an unmatched topic',
+        () async {
+      final tempDir = await Directory.systemTemp.createTemp('tgbot-topic-');
+      addTearDown(() => tempDir.delete(recursive: true));
+      final topicProject = Directory('${tempDir.path}/backend')
+        ..createSync(recursive: true);
+      final telegram = _FakeTelegramClient(
+        updates: <List<TelegramUpdate>>[
+          <TelegramUpdate>[
+            TelegramUpdate(
+              updateId: 1,
+              message: TelegramMessage(
+                chatId: -100123,
+                fromUserId: 1,
+                text: 'hello',
+              ),
+            ),
+          ],
+        ],
+      );
+      final app = BridgeApp(
+        config: _config(
+          null,
+          allowedUserIds: const <int>[],
+          allowedChatIds: const <int>[-100123],
+          topics: <ConfiguredTelegramTopic>[
+            ConfiguredTelegramTopic(
+              chatId: -100123,
+              name: 'Backend',
+              projectPath: topicProject.path,
+            ),
+          ],
+        ),
+        telegram: telegram,
+        sessions: SessionStore(),
+      );
+
+      await _runUntilIdle(app);
+
+      expect(
+        telegram.sentMessages.single.text,
+        contains('No project is configured for this chat/topic'),
+      );
     });
 
     test('runs codex, skips duplicate streamed output, and sends artifacts',
@@ -847,10 +1211,11 @@ Future<void> _runUntilIdle(
 }
 
 AppConfig _config(
-  String projectPath, {
+  String? projectPath, {
   bool finalResponseOnly = false,
   List<int> allowedUserIds = const <int>[1],
   List<int> allowedChatIds = const <int>[],
+  List<ConfiguredTelegramTopic> topics = const <ConfiguredTelegramTopic>[],
   List<ConfiguredTelegramCommand> telegramCommands =
       const <ConfiguredTelegramCommand>[
     ConfiguredTelegramCommand(command: 'start', description: 'Show usage help'),
@@ -873,6 +1238,7 @@ AppConfig _config(
     aiCliCmd: 'codex',
     aiCliArgs: const <String>[],
     projectPath: projectPath,
+    topics: topics,
     pollTimeoutSec: 1,
     aiCliTimeout: const Duration(seconds: 1),
     additionalSystemPrompt: null,
@@ -888,6 +1254,7 @@ class _FakeTelegramClient extends TelegramClient {
     this.throwOnChatAction = false,
     this.throwOnSendMessage = false,
     this.getUpdatesErrors = 0,
+    this.createdTopicsByName = const <String, TelegramForumTopic>{},
   }) : super('TOKEN');
 
   final List<List<TelegramUpdate>> updates;
@@ -895,6 +1262,7 @@ class _FakeTelegramClient extends TelegramClient {
   final bool throwOnChatAction;
   final bool throwOnSendMessage;
   int getUpdatesErrors;
+  final Map<String, TelegramForumTopic> createdTopicsByName;
 
   int _updateIndex = 0;
   int setCommandsCalls = 0;
@@ -902,6 +1270,7 @@ class _FakeTelegramClient extends TelegramClient {
   final List<String> chatActions = <String>[];
   final List<_SentFile> sentPhotos = <_SentFile>[];
   final List<_SentFile> sentDocuments = <_SentFile>[];
+  final List<_CreateTopicCall> createdTopics = <_CreateTopicCall>[];
 
   @override
   Future<List<TelegramUpdate>> getUpdates({
@@ -927,19 +1296,40 @@ class _FakeTelegramClient extends TelegramClient {
   }
 
   @override
-  Future<void> sendMessage({required int chatId, required String text}) async {
+  Future<TelegramForumTopic> createForumTopic({
+    required int chatId,
+    required String name,
+  }) async {
+    createdTopics.add(_CreateTopicCall(chatId: chatId, name: name));
+    return createdTopicsByName[name] ??
+        TelegramForumTopic(messageThreadId: 999, name: name);
+  }
+
+  @override
+  Future<void> sendMessage({
+    required int chatId,
+    required String text,
+    int? messageThreadId,
+  }) async {
     if (throwOnSendMessage) {
       throw const HttpException(
         'ClientException: HTTP request failed. Client is already closed.',
       );
     }
-    sentMessages.add(_SentMessage(chatId: chatId, text: text));
+    sentMessages.add(
+      _SentMessage(
+        chatId: chatId,
+        messageThreadId: messageThreadId,
+        text: text,
+      ),
+    );
   }
 
   @override
   Future<void> sendChatAction({
     required int chatId,
     required String action,
+    int? messageThreadId,
   }) async {
     chatActions.add(action);
     if (throwOnChatAction) {
@@ -952,9 +1342,16 @@ class _FakeTelegramClient extends TelegramClient {
     required int chatId,
     required String filePath,
     String? caption,
+    int? messageThreadId,
   }) async {
-    sentPhotos
-        .add(_SentFile(chatId: chatId, filePath: filePath, caption: caption));
+    sentPhotos.add(
+      _SentFile(
+        chatId: chatId,
+        messageThreadId: messageThreadId,
+        filePath: filePath,
+        caption: caption,
+      ),
+    );
   }
 
   @override
@@ -962,9 +1359,16 @@ class _FakeTelegramClient extends TelegramClient {
     required int chatId,
     required String filePath,
     String? caption,
+    int? messageThreadId,
   }) async {
-    sentDocuments
-        .add(_SentFile(chatId: chatId, filePath: filePath, caption: caption));
+    sentDocuments.add(
+      _SentFile(
+        chatId: chatId,
+        messageThreadId: messageThreadId,
+        filePath: filePath,
+        caption: caption,
+      ),
+    );
   }
 }
 
@@ -1043,16 +1447,34 @@ class _FakeCodexRunner extends CodexRunner {
 }
 
 class _SentMessage {
-  _SentMessage({required this.chatId, required this.text});
+  _SentMessage({
+    required this.chatId,
+    required this.text,
+    this.messageThreadId,
+  });
 
   final int chatId;
+  final int? messageThreadId;
   final String text;
 }
 
 class _SentFile {
-  _SentFile({required this.chatId, required this.filePath, this.caption});
+  _SentFile({
+    required this.chatId,
+    required this.filePath,
+    this.caption,
+    this.messageThreadId,
+  });
 
   final int chatId;
+  final int? messageThreadId;
   final String filePath;
   final String? caption;
+}
+
+class _CreateTopicCall {
+  _CreateTopicCall({required this.chatId, required this.name});
+
+  final int chatId;
+  final String name;
 }

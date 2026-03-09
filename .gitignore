@@ -17,6 +17,9 @@ build/
 
 # Config
 tgbot.yaml
+.tgbot-topic-registry.json
 
 # Test coverage
 coverage/
+
+

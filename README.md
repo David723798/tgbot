@@ -33,7 +33,7 @@ Create a starter config:
 tgbot init
 ```
 
-You can also start from the checked-in example: [`tgbot.yaml.example`](tgbot.yaml.example).
+You can also start from the checked-in example: `[tgbot.yaml.example](tgbot.yaml.example)`.
 
 Edit `tgbot.yaml`:
 
@@ -66,19 +66,23 @@ Then open your bot in Telegram and send it a message.
 tgbot <command> [options]
 ```
 
-| Command | Description |
-|---|---|
-| `start` | Start all bots declared in the config file |
-| `init` | Generate a starter `tgbot.yaml` |
+
+| Command    | Description                                            |
+| ---------- | ------------------------------------------------------ |
+| `start`    | Start all bots declared in the config file             |
+| `init`     | Generate a starter `tgbot.yaml`                        |
 | `validate` | Parse and validate a config file without starting bots |
-| `upgrade` | Reinstall the latest published `tgbot` with Dart |
+| `upgrade`  | Reinstall the latest published `tgbot` with Dart       |
+
 
 Global flags:
 
-| Flag | Description |
-|---|---|
-| `-h`, `--help` | Print usage help |
+
+| Flag              | Description       |
+| ----------------- | ----------------- |
+| `-h`, `--help`    | Print usage help  |
 | `-v`, `--version` | Print the version |
+
 
 Examples:
 
@@ -139,6 +143,10 @@ bots:
     # allowed_chat_ids:
     #   - -1001234567890
     project_path: /absolute/path/to/project
+    # Optional forum topic creation by name:
+    # topics:
+    #   - name: Backend
+    #     project_path: /absolute/path/to/backend-project
 ```
 
 ### Config with shared defaults
@@ -173,39 +181,100 @@ bots:
 
 ### Bot fields
 
-| Key | Required | Notes |
-|---|---|---|
-| `name` | Yes | Used in logs and status messages |
-| `telegram_bot_token` | Yes | Telegram Bot API token |
-| `allowed_user_ids` | No* | Telegram user IDs allowed to use the bot |
-| `allowed_chat_ids` | No* | Telegram chat IDs allowed to use the bot (groups/supergroups/channels) |
-| `project_path` | Yes | Absolute working directory used for the selected provider CLI; may be inherited from `defaults` |
-| `provider` | No | Provider name: `codex`, `cursor`, `opencode`, `gemini`, or `claude`; default `codex` |
-| `ai_cli_cmd` | No | Executable to run for the selected provider, defaults by provider (`codex`, `cursor-agent`, `opencode`, `gemini`, `claude`) |
-| `ai_cli_args` | No | Extra args passed to the provider CLI; accepts a YAML list or whitespace-delimited string |
-| `poll_timeout_sec` | No | Telegram long-poll timeout in seconds, default `60` |
-| `ai_cli_timeout_sec` | No | Per-request provider timeout in seconds, default `1000` |
-| `additional_system_prompt` | No | Extra system instructions prepended only for the first question in a session |
-| `memory` | No | When `true`, injects memory-file management instructions only for the first question in a session; default `false` |
-| `memory_filename` | No | Filename used by memory instructions when `memory` is enabled; default `MEMORY.md` |
-| `final_response_only` | No | When `true`, suppresses streamed partial messages and sends only the final assistant response, default `false` |
-| `telegram_commands` | No | Extra Telegram slash commands registered for this bot |
-| `log_level` | No | Runtime log level: `debug`, `info`, `warn`, `error`; default `info` |
-| `log_format` | No | Runtime log format: `text` or `json`; default `text` |
-| `strict_config` | No | When `true`, unknown keys are rejected during config parsing; default `false` |
-| `validate_project_path` | No | When `true`, `project_path` must exist and be readable at startup; default `false` |
+
+| Key                        | Required | Notes                                                                                                                       |
+| -------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `name`                     | Yes      | Used in logs and status messages                                                                                            |
+| `telegram_bot_token`       | Yes      | Telegram Bot API token                                                                                                      |
+| `allowed_user_ids`         | No*      | Telegram user IDs allowed to use the bot                                                                                    |
+| `allowed_chat_ids`         | No*      | Telegram chat IDs allowed to use the bot (groups/supergroups/channels)                                                      |
+| `project_path`             | No*      | Default working directory used when a message does not match a configured topic; may be inherited from `defaults`           |
+| `topics`                   | No       | List of forum topics to create/manage by `name`, optional `chat_id`, `project_path`, and topic-level overrides              |
+| `provider`                 | No       | Provider name: `codex`, `cursor`, `opencode`, `gemini`, or `claude`; default `codex`                                        |
+| `ai_cli_cmd`               | No       | Executable to run for the selected provider, defaults by provider (`codex`, `cursor-agent`, `opencode`, `gemini`, `claude`) |
+| `ai_cli_args`              | No       | Extra args passed to the provider CLI; accepts a YAML list or whitespace-delimited string                                   |
+| `poll_timeout_sec`         | No       | Telegram long-poll timeout in seconds, default `60`                                                                         |
+| `ai_cli_timeout_sec`       | No       | Per-request provider timeout in seconds, default `1000`                                                                     |
+| `additional_system_prompt` | No       | Extra system instructions prepended only for the first question in a session                                                |
+| `memory`                   | No       | When `true`, injects memory-file management instructions only for the first question in a session; default `false`          |
+| `memory_filename`          | No       | Filename used by memory instructions when `memory` is enabled; default `MEMORY.md`                                          |
+| `final_response_only`      | No       | When `true`, suppresses streamed partial messages and sends only the final assistant response, default `true`               |
+| `telegram_commands`        | No       | Extra Telegram slash commands registered for this bot                                                                       |
+| `log_level`                | No       | Runtime log level: `debug`, `info`, `warn`, `error`; default `info`                                                         |
+| `log_format`               | No       | Runtime log format: `text` or `json`; default `text`                                                                        |
+| `strict_config`            | No       | When `true`, unknown keys are rejected during config parsing; default `false`                                               |
+| `validate_project_path`    | No       | When `true`, `project_path` must exist and be readable at startup; default `false`                                          |
+
 
 Notes:
 
 - `defaults` applies only when a bot omits that key.
-- Every bot must end up with an effective `project_path`.
+- `project_path` is required unless the bot configures at least one topic in `topics`.
+- `topics[*].project_path` values are normalized to absolute paths at startup.
+- `topics[*].chat_id` may be omitted only when the bot has exactly one effective `allowed_chat_ids` value; otherwise it is required.
 - At least one of `allowed_user_ids` or `allowed_chat_ids` is required.
 - `telegram_commands` must be a non-empty list when provided.
 - Command names must match `^[a-z0-9_]{1,32}$`.
 - Built-in `/start`, `/new`, `/stop`, and `/restart` commands are always present unless you override them in `telegram_commands`.
-- `project_path` is normalized to an absolute path at startup.
+- `project_path` is normalized to an absolute path at startup when provided.
+- Name-based topic creation is cached in `.tgbot-topic-registry.json` so created `message_thread_id` values are reused on restart.
 - In `strict_config: true`, unknown keys in `root`, `defaults`, `bots[*]`, and `telegram_commands[*]` fail fast.
 - `ai_cli_args` string values support shell-like quoting (single quotes, double quotes, and escapes).
+
+### Topic creation by name
+
+If you want the bot to create forum topics for you, configure them by name:
+
+```yaml
+bots:
+  - name: my-bot
+    telegram_bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+    allowed_user_ids:
+      - 123456789
+    allowed_chat_ids:
+      - -1001234567890
+    topics:
+      - name: Backend
+        project_path: /absolute/path/to/backend-project
+      - name: Mobile
+        project_path: /absolute/path/to/mobile-project
+```
+
+Notes:
+
+- The bot calls Telegram `createForumTopic` for entries not already present in the local registry.
+- Telegram returns a `message_thread_id`, and the bot stores it in `.tgbot-topic-registry.json`.
+- If the bot has exactly one `allowed_chat_ids` entry, `topics[*].chat_id` can be omitted and that chat is used automatically.
+- Telegram Bot API does not provide a topic-by-name lookup endpoint, so deleting that registry file can cause duplicate topics to be created on the next startup.
+- The bot must be an admin in the target supergroup and allowed to manage topics.
+
+Supported topic-level overrides:
+
+- `project_path`
+- `telegram_commands`
+- `additional_system_prompt`
+- `memory`
+- `memory_filename`
+- `final_response_only`
+
+Example with topic-specific command and response behavior:
+
+```yaml
+bots:
+  - name: my-bot
+    telegram_bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+    allowed_chat_ids:
+      - -1001234567890
+    topics:
+      - name: Backend
+        project_path: /absolute/path/to/backend-project
+        final_response_only: true
+        additional_system_prompt: |
+          Focus on backend services only.
+        telegram_commands:
+          - command: topic_fix
+            description: Fix this backend issue: {args}
+```
 
 ## Custom Telegram Commands
 
@@ -240,16 +309,16 @@ Examples:
 
 - One polling loop runs per configured bot.
 - Messages are processed only when sender user ID is in `allowed_user_ids` or chat ID is in `allowed_chat_ids`.
-- Messages are processed serially per chat so responses stay ordered.
+- Messages are processed serially per chat topic so responses stay ordered without blocking unrelated topics in the same forum chat.
 - `/start` returns a short help message plus the registered command list.
-- `/new` clears the in-memory thread/session id for that Telegram chat.
-- `/stop` terminates the active provider CLI process for that Telegram chat, if one is running.
+- `/new` clears the in-memory thread/session id for that Telegram chat topic.
+- `/stop` terminates the active provider CLI process for that Telegram chat topic, if one is running.
 - `/restart` reloads the same YAML config file used at startup and restarts all bots in this process.
 - `/restart` is allowed only if the sender ID is listed in `allowed_user_ids` for every configured bot.
 - `/restart` uses rollback semantics: if reload/startup fails, existing bots keep running.
-- If a run is already in progress for a chat, new prompts wait in that chat's queue until the active run finishes or is stopped.
+- If a run is already in progress for a chat topic, new prompts wait in that topic's queue until the active run finishes or is stopped.
 - Any other text message is forwarded to the configured provider CLI.
-- The current thread/session id is stored per chat and reused until `/new` or process restart.
+- The current thread/session id is stored per chat topic and reused until `/new` or process restart.
 - `tgbot start` handles `SIGINT`/`SIGTERM` and shuts down polling, active runs, and HTTP clients gracefully.
 
 Provider invocation patterns:
@@ -273,6 +342,7 @@ claude ...args --verbose --print --output-format stream-json --resume <thread_id
 ```
 
 Notes:
+
 - `cursor`, `gemini`, `opencode`, and `claude` session ids are captured from provider output when available.
 - For `cursor`, `tgbot` adds `--trust` automatically unless you already pass one of `--trust`, `--yolo`, or `-f` in `ai_cli_args`.
 

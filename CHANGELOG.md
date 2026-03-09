@@ -1,3 +1,12 @@
+## 0.2.5
+
+- Add `topics` config support so bots can create Telegram forum topics by name and persist the returned `message_thread_id` locally.
+- Allow topic-level overrides for `telegram_commands`, `additional_system_prompt`, `memory`, `memory_filename`, and `final_response_only`.
+- Change the default `final_response_only` behavior to `true`.
+- Allow omitting bot-level `project_path` when `topics` are configured; unmatched chats/topics now return a configuration error instead of guessing a workspace.
+- Track queued runs and session/thread IDs per chat topic instead of only per chat.
+- Reply back into the originating Telegram topic by preserving `message_thread_id` for text, typing, and artifact uploads.
+
 ## 0.2.4
 
 - Add `allowed_chat_ids` config support so bots can authorize and respond in Telegram groups/supergroups by chat ID.

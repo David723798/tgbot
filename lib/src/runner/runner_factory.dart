@@ -7,12 +7,21 @@ import 'package:tgbot/src/runner/opencode_runner.dart';
 
 /// Builds a provider-specific runner from [config].
 AiCliRunner createRunner(AppConfig config) {
+  final projectPath = config.projectPath;
+  if (projectPath == null) {
+    throw StateError('No default project_path configured for this bot.');
+  }
+  return createRunnerForProjectPath(config, projectPath);
+}
+
+/// Builds a provider-specific runner from [config] for [projectPath].
+AiCliRunner createRunnerForProjectPath(AppConfig config, String projectPath) {
   switch (config.provider) {
     case AiProvider.codex:
       return CodexRunner(
         command: config.aiCliCmd,
         args: config.aiCliArgs,
-        projectPath: config.projectPath,
+        projectPath: projectPath,
         timeout: config.aiCliTimeout,
         additionalSystemPrompt: config.additionalSystemPrompt,
         memory: config.memory,
@@ -22,7 +31,7 @@ AiCliRunner createRunner(AppConfig config) {
       return CursorRunner(
         command: config.aiCliCmd,
         args: config.aiCliArgs,
-        projectPath: config.projectPath,
+        projectPath: projectPath,
         timeout: config.aiCliTimeout,
         additionalSystemPrompt: config.additionalSystemPrompt,
         memory: config.memory,
@@ -32,7 +41,7 @@ AiCliRunner createRunner(AppConfig config) {
       return OpenCodeRunner(
         command: config.aiCliCmd,
         args: config.aiCliArgs,
-        projectPath: config.projectPath,
+        projectPath: projectPath,
         timeout: config.aiCliTimeout,
         additionalSystemPrompt: config.additionalSystemPrompt,
         memory: config.memory,
@@ -42,7 +51,7 @@ AiCliRunner createRunner(AppConfig config) {
       return GeminiRunner(
         command: config.aiCliCmd,
         args: config.aiCliArgs,
-        projectPath: config.projectPath,
+        projectPath: projectPath,
         timeout: config.aiCliTimeout,
         additionalSystemPrompt: config.additionalSystemPrompt,
         memory: config.memory,
@@ -52,7 +61,7 @@ AiCliRunner createRunner(AppConfig config) {
       return ClaudeRunner(
         command: config.aiCliCmd,
         args: config.aiCliArgs,
-        projectPath: config.projectPath,
+        projectPath: projectPath,
         timeout: config.aiCliTimeout,
         additionalSystemPrompt: config.additionalSystemPrompt,
         memory: config.memory,

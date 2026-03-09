@@ -36,6 +36,7 @@ bots:
     #   - --model
     #   - gpt-5
     # ai_cli_timeout_sec: 1000
+    # final_response_only: true # send only the final assistant reply by default
     # memory: false            # add memory file instructions on first session question
     # memory_filename: MEMORY.md # customize the filename used by memory instructions
     # Optional runtime logging options.
@@ -43,7 +44,15 @@ bots:
     # log_format: text           # text or json
     # strict_config: false       # reject unknown keys when true
     # validate_project_path: false # verify project_path exists/readable
-    # The absolute path to the project you want the bot to interact with.
-    # This can be overridden on a per-bot basis.
+    # Optional default project path. Required unless you configure `topics`.
     project_path: /absolute/path/to/another/project
+    # Optional: create forum topics by name and map them to projects.
+    # topics:
+    #   - name: Backend
+    #     project_path: /absolute/path/to/backend-project
+    #     final_response_only: true
+    #     additional_system_prompt: Focus on backend services only.
+    #     telegram_commands:
+    #       - command: topic_fix
+    #         description: Fix this backend issue: {args}
 ''';
